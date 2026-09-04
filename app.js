@@ -1,7 +1,7 @@
 import { initDb, sb, rpc } from './db.js';
 import { saveEnvLocally } from './env.js';
 import { S } from './state.js';
-import { $, $$, h, clear, toast, oops, paintIcons, initials, modal, closeModal, promptBox } from './util.js';
+import { $, $$, h, clear, toast, oops, paintIcons, initials, modal, closeModal, promptBox, setActiveNav } from './util.js';
 import { mountAuthUI, loadMe, twoStepGate, initIdentity, startPresence, signOut } from './auth.js';
 import { applySettings, saveSettings } from './theme.js';
 import { loadChats, loadFolders, renderChatList, openChat, closeChat, subscribeGlobal,
@@ -76,7 +76,7 @@ function wireChrome() {
   $$('.rail-btn[data-nav]').forEach(btn => btn.onclick = async () => {
     const nav = btn.dataset.nav;
     if (nav === 'settings') return openSettings();
-    $$('.rail-btn[data-nav]').forEach(b => b.classList.toggle('is-on', b === btn));
+    setActiveNav(nav);
     S.view = nav;
     $('#q').value = '';
     $('#btn-search-cancel').classList.remove('is-shown');
