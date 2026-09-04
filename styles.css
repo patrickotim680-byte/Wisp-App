@@ -170,8 +170,24 @@ input:focus, textarea:focus, select:focus { border-color: var(--accent); }
 .list-head { display: flex; align-items: center; justify-content: space-between; padding: 16px 10px 10px 18px }
 .list-head h2 { font-size: calc(1.15rem * var(--scale)); font-weight: 600; letter-spacing: -0.01em }
 .list-actions { display: flex }
-.search-wrap { padding: 0 14px 10px }
-.search-wrap input { width: 100%; background: var(--sunken); border-color: transparent; border-radius: 12px }
+.search-wrap { padding: 0 14px 10px; display: flex; align-items: center; gap: 8px }
+.search-wrap input { flex: 1; min-width: 0; width: 100%; background: var(--sunken); border-color: transparent; border-radius: 12px }
+.search-cancel {
+  flex: none; appearance: none; cursor: pointer; white-space: nowrap;
+  height: 38px; max-width: 0; padding: 0; margin: 0;
+  border: 1px solid color-mix(in oklab, var(--line) 70%, transparent);
+  border-radius: 999px; font-size: 0.86em; font-weight: 600; color: var(--accent-strong);
+  background: color-mix(in oklab, var(--surface) 45%, transparent);
+  backdrop-filter: blur(16px) saturate(180%);
+  -webkit-backdrop-filter: blur(16px) saturate(180%);
+  box-shadow: 0 1px 1px color-mix(in oklab, var(--ink) 4%, transparent);
+  opacity: 0; overflow: hidden; transform: translateX(10px) scale(0.92);
+  transition: max-width 0.4s var(--ease), padding 0.4s var(--ease), opacity 0.3s var(--ease), transform 0.4s var(--ease), background 0.15s var(--ease);
+}
+.search-cancel.is-shown { max-width: 100px; padding: 0 16px; opacity: 1; transform: translateX(0) scale(1) }
+.search-cancel:hover { background: color-mix(in oklab, var(--accent-quiet) 65%, var(--surface)) }
+.search-cancel:active { transform: scale(0.94) }
+.search-cancel:focus-visible { outline-offset: 2px }
 .folders { display: flex; gap: 6px; padding: 0 14px 10px; overflow-x: auto; scrollbar-width: none }
 .folders::-webkit-scrollbar { display: none }
 .chip {
