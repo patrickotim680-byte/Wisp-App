@@ -65,15 +65,19 @@
 <!-- ── app ──────────────────────────────────────────────────────────────── -->
 <main id="app" class="app" hidden>
   <nav class="rail">
-    <button class="rail-btn is-on" data-nav="chats" title="Chats"><span class="ico">chat</span><b id="badge-unread" class="badge" hidden>0</b></button>
-    <button class="rail-btn" data-nav="people" title="People"><span class="ico">people</span></button>
-    <button class="rail-btn" data-nav="calls" title="Calls"><span class="ico">call</span></button>
-    <button class="rail-btn" data-nav="saved" title="Starred, pinned, bookmarks"><span class="ico">star</span></button>
-    <button class="rail-btn" data-nav="scheduled" title="Scheduled"><span class="ico">clock</span></button>
-    <div class="rail-sp"></div>
-    <button class="rail-btn" id="btn-focus" title="Focus mode"><span class="ico">moon</span></button>
-    <button class="rail-btn" data-nav="settings" title="Settings"><span class="ico">gear</span></button>
-    <button class="rail-btn avatar-btn" id="btn-me" title="Profile"><img id="me-avatar" alt="" /></button>
+    <div class="rail-nav" id="rail-nav">
+      <span class="rail-glow" aria-hidden="true"></span>
+      <button class="rail-btn is-on" data-nav="chats" title="Chats"><span class="ico">chat</span><b id="badge-unread" class="badge" hidden>0</b></button>
+      <button class="rail-btn" data-nav="people" title="People"><span class="ico">people</span></button>
+      <button class="rail-btn" data-nav="calls" title="Calls"><span class="ico">call</span></button>
+      <button class="rail-btn" data-nav="saved" title="Starred, pinned, bookmarks"><span class="ico">star</span></button>
+      <button class="rail-btn" data-nav="scheduled" title="Scheduled"><span class="ico">clock</span></button>
+    </div>
+    <div class="rail-tools">
+      <button class="rail-btn" id="btn-focus" title="Focus mode"><span class="ico">moon</span></button>
+      <button class="rail-btn" data-nav="settings" title="Settings"><span class="ico">gear</span></button>
+      <button class="rail-btn avatar-btn" id="btn-me" title="Profile"><img id="me-avatar" alt="" /></button>
+    </div>
   </nav>
 
   <section class="list" id="list-pane">

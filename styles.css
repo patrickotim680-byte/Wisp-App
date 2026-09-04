@@ -143,21 +143,50 @@ input:focus, textarea:focus, select:focus { border-color: var(--accent); }
 @media (max-width: 760px) { .auth-grid { grid-template-columns: 1fr } .auth-brand { display: none } }
 
 /* ── app frame ─────────────────────────────────────────────────────────── */
-.app { display: grid; grid-template-columns: 60px minmax(260px, 340px) 1fr; height: 100dvh; }
-.app.has-side { grid-template-columns: 60px minmax(260px, 320px) 1fr minmax(280px, 340px); }
-
-.rail {
-  background: var(--sunken); border-right: 1px solid var(--line);
-  display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 12px 0;
+.app {
+  display: grid; height: 100dvh;
+  grid-template-columns: minmax(260px, 340px) 1fr;
+  grid-template-rows: 1fr auto;
+  grid-template-areas: "list conv" "rail rail";
 }
-.rail-sp { flex: 1; }
+.app.has-side {
+  grid-template-columns: minmax(260px, 320px) 1fr minmax(280px, 340px);
+  grid-template-areas: "list conv side" "rail rail rail";
+}
+
+/* Horizontal glass tab bar. Primary views live in `.rail-nav`, behind a single
+   sliding indicator; secondary controls sit in `.rail-tools`, split off by a
+   divider, so the bar reads as two organized groups instead of one long row. */
+.rail {
+  grid-area: rail;
+  background: color-mix(in oklab, var(--surface) 72%, transparent);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border-top: 1px solid var(--line);
+  display: flex; align-items: center; gap: 4px;
+  padding: 8px 12px calc(8px + env(safe-area-inset-bottom, 0px));
+}
+.rail-nav { position: relative; display: flex; align-items: center; gap: 4px; --rail-i: 0; }
+.rail-glow {
+  position: absolute; top: 0; left: 0; width: 42px; height: 42px; z-index: 0;
+  background: color-mix(in oklab, var(--accent-quiet) 75%, transparent);
+  backdrop-filter: blur(12px) saturate(180%);
+  -webkit-backdrop-filter: blur(12px) saturate(180%);
+  border-radius: 12px; box-shadow: 0 1px 1px color-mix(in oklab, var(--ink) 4%, transparent);
+  transform: translateX(calc(var(--rail-i) * 46px));
+  transition: transform 0.5s var(--ease);
+}
+.rail-tools {
+  display: flex; align-items: center; gap: 4px; margin-left: auto;
+  padding-left: 10px; border-left: 1px solid var(--line);
+}
 .rail-btn {
-  position: relative; width: 42px; height: 42px; border: none; background: none; cursor: pointer;
+  position: relative; z-index: 1; width: 42px; height: 42px; border: none; background: none; cursor: pointer;
   border-radius: 12px; color: var(--ink-3); display: grid; place-items: center;
   transition: background 0.16s var(--ease), color 0.16s var(--ease);
 }
 .rail-btn:hover { background: var(--line-soft); color: var(--ink) }
-.rail-btn.is-on { background: var(--accent-quiet); color: var(--accent-strong) }
+.rail-btn.is-on { color: var(--accent-strong) }
 .rail-btn.armed { background: var(--accent); color: var(--on-accent) }
 .avatar-btn img { width: 28px; height: 28px; border-radius: 50%; object-fit: cover; background: var(--line) }
 .badge {
@@ -166,7 +195,7 @@ input:focus, textarea:focus, select:focus { border-color: var(--accent); }
   display: grid; place-items: center; padding: 0 4px;
 }
 
-.list { border-right: 1px solid var(--line); display: grid; grid-template-rows: auto auto auto 1fr; background: var(--surface); min-height: 0 }
+.list { grid-area: list; border-right: 1px solid var(--line); display: grid; grid-template-rows: auto auto auto 1fr; background: var(--surface); min-height: 0 }
 .list-head { display: flex; align-items: center; justify-content: space-between; padding: 16px 10px 10px 18px }
 .list-head h2 { font-size: calc(1.15rem * var(--scale)); font-weight: 600; letter-spacing: -0.01em }
 .list-actions { display: flex }
@@ -221,7 +250,7 @@ input:focus, textarea:focus, select:focus { border-color: var(--accent); }
 .empty { padding: 40px 22px; color: var(--ink-3); text-align: center; display: grid; gap: 6px }
 
 /* ── conversation ──────────────────────────────────────────────────────── */
-.conv { display: grid; min-height: 0; background: var(--bg); position: relative }
+.conv { grid-area: conv; display: grid; min-height: 0; background: var(--bg); position: relative }
 .conv-empty { display: grid; place-content: center; justify-items: center; gap: 6px; text-align: center }
 .conv-inner { display: grid; grid-template-rows: auto auto auto 1fr auto auto; min-height: 0 }
 .conv-head {
@@ -344,7 +373,7 @@ input:focus, textarea:focus, select:focus { border-color: var(--accent); }
 .emoji-pop button:hover { background: var(--sunken) }
 
 /* ── side panel ────────────────────────────────────────────────────────── */
-.side { border-left: 1px solid var(--line); background: var(--surface); overflow-y: auto; padding: 18px }
+.side { grid-area: side; border-left: 1px solid var(--line); background: var(--surface); overflow-y: auto; padding: 18px }
 .side h3 { font-size: calc(1.05rem * var(--scale)); font-weight: 600; margin-bottom: 4px }
 .side section { padding: 16px 0; border-bottom: 1px solid var(--line-soft); display: grid; gap: 10px }
 .side section:last-child { border: none }
@@ -362,15 +391,38 @@ input:focus, textarea:focus, select:focus { border-color: var(--accent); }
 .picker-hue { height: 12px; border-radius: 999px; background: linear-gradient(90deg,
   oklch(0.62 0.19 0), oklch(0.62 0.19 60), oklch(0.62 0.19 120), oklch(0.62 0.19 180),
   oklch(0.62 0.19 240), oklch(0.62 0.19 300), oklch(0.62 0.19 360)); position: relative; cursor: pointer }
-.seg { display: flex; background: var(--sunken); border-radius: 999px; padding: 3px; gap: 2px }
-.seg button { flex: 1; border: none; background: none; padding: 6px 8px; border-radius: 999px; cursor: pointer; color: var(--ink-2); font-size: 0.85em }
-.seg button.is-on { background: var(--surface); color: var(--ink); box-shadow: var(--shadow) }
+.seg { position: relative; display: flex; background: var(--sunken); border-radius: 999px; padding: 3px; --seg-n: 3; --seg-i: 0 }
+.seg button { flex: 1; position: relative; z-index: 1; border: none; background: none; padding: 6px 8px; border-radius: 999px; cursor: pointer; color: var(--ink-2); font-size: 0.85em; transition: color 0.25s var(--ease) }
+.seg button.is-on { color: var(--ink) }
+.seg-glow {
+  position: absolute; top: 3px; bottom: 3px; left: 3px; z-index: 0;
+  width: calc((100% - 6px) / var(--seg-n));
+  background: color-mix(in oklab, var(--surface) 60%, transparent);
+  backdrop-filter: blur(10px) saturate(180%);
+  -webkit-backdrop-filter: blur(10px) saturate(180%);
+  border-radius: 999px; box-shadow: var(--shadow);
+  transform: translateX(calc(var(--seg-i) * 100%));
+  transition: transform 0.45s var(--ease);
+}
 .member { display: flex; align-items: center; gap: 10px; font-size: 0.9em }
 .member .role { margin-left: auto; font-size: 0.78em; color: var(--ink-3) }
-.switch { position: relative; width: 40px; height: 23px; border-radius: 999px; background: var(--line); border: none; cursor: pointer; transition: background 0.18s var(--ease); flex: none }
-.switch::after { content: ""; position: absolute; top: 3px; left: 3px; width: 17px; height: 17px; border-radius: 50%; background: var(--surface); transition: transform 0.18s var(--ease) }
-.switch[aria-checked="true"] { background: var(--accent) }
+.switch {
+  position: relative; width: 40px; height: 23px; border-radius: 999px;
+  background: color-mix(in oklab, var(--line) 80%, transparent);
+  backdrop-filter: blur(6px) saturate(160%); -webkit-backdrop-filter: blur(6px) saturate(160%);
+  border: none; cursor: pointer; flex: none;
+  transition: background 0.3s var(--ease);
+}
+.switch::after {
+  content: ""; position: absolute; top: 3px; left: 3px; width: 17px; height: 17px; border-radius: 50%;
+  background: color-mix(in oklab, var(--surface) 85%, white 15%);
+  box-shadow: 0 1px 3px color-mix(in oklab, var(--ink) 22%, transparent), inset 0 1px 0 color-mix(in oklab, white 40%, transparent);
+  transition: transform 0.32s var(--ease);
+}
+.switch[aria-checked="true"] { background: color-mix(in oklab, var(--accent) 88%, transparent) }
 .switch[aria-checked="true"]::after { transform: translateX(17px) }
+.switch:active::after { width: 20px }
+.switch[aria-checked="true"]:active::after { transform: translateX(14px) }
 
 /* ── call overlay ──────────────────────────────────────────────────────── */
 .call { position: fixed; inset: 0; z-index: 60; background: oklch(0.16 0.01 var(--hue-n)); color: oklch(0.97 0 0); display: grid; grid-template-rows: 1fr auto }
@@ -409,8 +461,12 @@ dialog::backdrop { background: oklch(0.2 0.01 70 / 0.42) }
 mark { background: var(--accent-quiet); color: inherit; border-radius: 3px }
 
 @media (max-width: 900px) {
-  .app { grid-template-columns: 54px 1fr }
-  .app.has-side { grid-template-columns: 54px 1fr }
+  .app, .app.has-side {
+    grid-template-columns: 1fr;
+    grid-template-rows: 1fr auto;
+    grid-template-areas: "main" "rail";
+  }
+  .list, .conv { grid-area: main }
   .conv { display: none }
   .app.on-conv .list { display: none }
   .app.on-conv .conv { display: grid }
