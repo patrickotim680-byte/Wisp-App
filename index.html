@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Wisp</title>
+<link rel="manifest" href="/manifest.webmanifest" />
+<meta name="theme-color" content="#f6f2ec" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Instrument+Sans:wght@400;500;600;700&family=Newsreader:opsz,wght@6..72,400;6..72,600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+<div id="boot" class="boot"><div class="boot-mark">wisp</div></div>
+
+<!-- ── setup (only when env vars are missing) ───────────────────────────── -->
+<section id="setup" class="pane-center" hidden>
+  <div class="sheet">
+    <h1 class="display">Connect a Supabase project</h1>
+    <p class="muted">No <code>SUPABASE_URL</code> / <code>SUPABASE_ANON_KEY</code> reached the client. Set them in Vercel, or paste them here to keep working locally (stored in this browser only).</p>
+    <label>Project URL<input id="setup-url" placeholder="https://xxxx.supabase.co" /></label>
+    <label>Anon key<input id="setup-key" placeholder="eyJhbGciOi..." /></label>
+    <button id="setup-save" class="btn primary">Connect</button>
+  </div>
+</section>
+
+<!-- ── auth ─────────────────────────────────────────────────────────────── -->
+<section id="auth" class="pane-center" hidden>
+  <div class="auth-grid">
+    <aside class="auth-brand">
+      <div class="wordmark">wisp</div>
+      <p class="auth-pitch">Messages that behave the way you set them up. Your theme, your folders,
+        your quiet hours, on every device you sign in from.</p>
+      <ul class="auth-facts">
+        <li>Realtime delivery, read state, typing</li>
+        <li>Scheduled and recurring sends</li>
+        <li>Per-chat encryption, locks, disappearing timers</li>
+      </ul>
+    </aside>
+    <div class="auth-form">
+      <div class="tabs" role="tablist">
+        <button class="tab is-on" data-authtab="in">Sign in</button>
+        <button class="tab" data-authtab="up">Create account</button>
+      </div>
+      <form id="form-in" class="stack">
+        <label>Email<input type="email" name="email" autocomplete="email" required /></label>
+        <label>Password<input type="password" name="password" autocomplete="current-password" required /></label>
+        <button class="btn primary" type="submit">Sign in</button>
+        <button type="button" class="btn ghost" id="link-forgot">Forgot password</button>
+      </form>
+      <form id="form-up" class="stack" hidden>
+        <label>Display name<input name="display_name" required /></label>
+        <label>Email<input type="email" name="email" autocomplete="email" required /></label>
+        <label>Password<input type="password" name="password" minlength="8" autocomplete="new-password" required /></label>
+        <p class="hint">8 characters minimum. Also derives your encryption key, so a reset means old
+          encrypted messages stay unreadable.</p>
+        <button class="btn primary" type="submit">Create account</button>
+      </form>
+      <p id="auth-msg" class="auth-msg" role="status"></p>
+    </div>
+  </div>
+</section>
+
+<!-- ── app ──────────────────────────────────────────────────────────────── -->
+<main id="app" class="app" hidden>
+  <nav class="rail">
+    <button class="rail-btn is-on" data-nav="chats" title="Chats"><span class="ico">chat</span><b id="badge-unread" class="badge" hidden>0</b></button>
+    <button class="rail-btn" data-nav="people" title="People"><span class="ico">people</span></button>
+    <button class="rail-btn" data-nav="calls" title="Calls"><span class="ico">call</span></button>
+    <button class="rail-btn" data-nav="saved" title="Starred, pinned, bookmarks"><span class="ico">star</span></button>
+    <button class="rail-btn" data-nav="scheduled" title="Scheduled"><span class="ico">clock</span></button>
+    <div class="rail-sp"></div>
+    <button class="rail-btn" id="btn-focus" title="Focus mode"><span class="ico">moon</span></button>
+    <button class="rail-btn" data-nav="settings" title="Settings"><span class="ico">gear</span></button>
+    <button class="rail-btn avatar-btn" id="btn-me" title="Profile"><img id="me-avatar" alt="" /></button>
+  </nav>
+
+  <section class="list" id="list-pane">
+    <header class="list-head">
+      <h2 id="list-title">Chats</h2>
+      <div class="list-actions">
+        <button class="icon-btn" id="btn-new-chat" title="New chat"><span class="ico">plus</span></button>
+        <button class="icon-btn" id="btn-new-group" title="New group"><span class="ico">group-add</span></button>
+      </div>
+    </header>
+    <div class="search-wrap">
+      <input id="q" placeholder="Search messages, people, files" autocomplete="off" />
+    </div>
+    <div class="folders" id="folders"></div>
+    <div class="list-body" id="list-body"></div>
+  </section>
+
+  <section class="conv" id="conv">
+    <div class="conv-empty" id="conv-empty">
+      <p class="display">Nothing open</p>
+      <p class="muted">Pick a conversation, or start one from People.</p>
+    </div>
+
+    <div class="conv-inner" id="conv-inner" hidden>
+      <header class="conv-head">
+        <button class="icon-btn only-narrow" id="btn-back"><span class="ico">back</span></button>
+        <button class="conv-id" id="conv-id">
+          <img id="conv-avatar" alt="" />
+          <span><b id="conv-name"></b><small id="conv-sub"></small></span>
+        </button>
+        <div class="conv-tools">
+          <button class="icon-btn" id="btn-search-in" title="Search in chat"><span class="ico">search</span></button>
+          <button class="icon-btn" id="btn-digest" title="Catch me up"><span class="ico">spark</span></button>
+          <button class="icon-btn" id="btn-call-audio" title="Voice call"><span class="ico">call</span></button>
+          <button class="icon-btn" id="btn-call-video" title="Video call"><span class="ico">video</span></button>
+          <button class="icon-btn" id="btn-info" title="Details"><span class="ico">info</span></button>
+        </div>
+      </header>
+
+      <div class="pin-strip" id="pin-strip" hidden></div>
+      <div class="select-bar" id="select-bar" hidden>
+        <span id="select-count">0 selected</span>
+        <button class="btn small" id="sel-forward">Forward</button>
+        <button class="btn small" id="sel-star">Star</button>
+        <button class="btn small danger" id="sel-delete">Delete</button>
+        <button class="btn small ghost" id="sel-cancel">Cancel</button>
+      </div>
+
+      <div class="thread" id="thread"></div>
+      <div class="typing-line" id="typing-line"></div>
+
+      <footer class="composer" id="composer">
+        <div class="reply-chip" id="reply-chip" hidden></div>
+        <div class="attach-row" id="attach-row" hidden></div>
+        <div class="composer-main">
+          <button class="icon-btn" id="btn-attach" title="Attach"><span class="ico">clip</span></button>
+          <button class="icon-btn" id="btn-emoji" title="Emoji"><span class="ico">smile</span></button>
+          <div class="input-shell">
+            <textarea id="input" rows="1" placeholder="Message"></textarea>
+            <div class="mention-pop" id="mention-pop" hidden></div>
+          </div>
+          <button class="icon-btn" id="btn-schedule" title="Schedule send"><span class="ico">clock</span></button>
+          <button class="icon-btn rec" id="btn-mic" title="Hold to record"><span class="ico">mic</span></button>
+          <button class="icon-btn send" id="btn-send" title="Send"><span class="ico">send</span></button>
+        </div>
+        <div class="rec-strip" id="rec-strip" hidden>
+          <span class="rec-dot"></span><span id="rec-time">0:00</span>
+          <canvas id="rec-wave" height="28"></canvas>
+          <button class="btn small ghost" id="rec-cancel">Discard</button>
+          <button class="btn small primary" id="rec-send">Send</button>
+        </div>
+        <input type="file" id="file-input" multiple hidden />
+      </footer>
+    </div>
+  </section>
+
+  <aside class="side" id="side" hidden></aside>
+</main>
+
+<!-- ── call overlay ─────────────────────────────────────────────────────── -->
+<div id="call" class="call" hidden>
+  <div class="call-stage">
+    <video id="call-remote" autoplay playsinline></video>
+    <video id="call-local" autoplay playsinline muted></video>
+    <div class="call-meta">
+      <b id="call-who"></b><span id="call-state">Ringing</span><span id="call-timer"></span>
+      <span id="call-quality" class="quality"></span>
+    </div>
+  </div>
+  <div class="call-bar">
+    <button class="round" id="call-mute" title="Mute"><span class="ico">mic</span></button>
+    <button class="round" id="call-cam" title="Camera"><span class="ico">video</span></button>
+    <button class="round" id="call-share" title="Share screen"><span class="ico">screen</span></button>
+    <button class="round accept" id="call-accept" title="Accept"><span class="ico">call</span></button>
+    <button class="round hang" id="call-hang" title="Hang up"><span class="ico">hangup</span></button>
+  </div>
+</div>
+
+<div id="toasts" class="toasts"></div>
+<dialog id="modal"><div id="modal-body"></div></dialog>
+<div id="lock" class="pane-center" hidden></div>
+
+<script type="module" src="/js/app.js"></script>
+</body>
+</html>
