@@ -111,8 +111,12 @@ input:focus, textarea:focus, select:focus { border-color: var(--accent); }
 /* Placeholder for inline SVG icons; paintIcons() swaps these at boot. */
 .ico { font-size: 0; width: 20px; height: 20px; display: block; }
 
+/* Guarantees the `hidden` attribute always wins over any component's own
+   display rule below. Without this, elements like .boot and .call stay
+   visible even after JS sets `.hidden = true`. */
+[hidden] { display: none !important; }
+
 /* ── boot / centered panes ─────────────────────────────────────────────── */
-.boot[hidden] { display: none; }
 .boot { position: fixed; inset: 0; display: grid; place-items: center; background: var(--bg); z-index: 90; }
 .boot-mark { font-size: 1.4rem; letter-spacing: 0.22em; color: var(--ink-3); animation: pulse 1.6s ease-in-out infinite; }
 @keyframes pulse { 0%,100% { opacity: 0.35 } 50% { opacity: 1 } }
