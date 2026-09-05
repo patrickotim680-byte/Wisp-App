@@ -1,17 +1,34 @@
 import { sb, rpc, sel, dropAll } from './db.js';
 import { S, emit } from './state.js';
-import { $, h, toast, oops, modal, closeModal, clear } from './util.js';
+import { $, $$, h, toast, oops, modal, closeModal, clear, paintIcons } from './util.js';
 import { applySettings } from './theme.js';
 import { unlockIdentity, createIdentity, forgetKeys } from './crypto.js';
 
 const msg = (t, ok = false) => { const el = $('#auth-msg'); el.textContent = t; el.className = 'auth-msg' + (ok ? ' ok' : ''); };
+
+const AUTH_COPY = {
+  in: { heading: 'Welcome back!', sub: 'Sign in to continue your conversations' },
+  up: { heading: 'Create your account', sub: "Let's get you started" },
+};
 
 export function mountAuthUI() {
   document.querySelectorAll('[data-authtab]').forEach(b => b.onclick = () => {
     document.querySelectorAll('[data-authtab]').forEach(x => x.classList.toggle('is-on', x === b));
     $('#form-in').hidden = b.dataset.authtab !== 'in';
     $('#form-up').hidden = b.dataset.authtab !== 'up';
+    const copy = AUTH_COPY[b.dataset.authtab];
+    $('#auth-heading').textContent = copy.heading;
+    $('#auth-sub').textContent = copy.sub;
     msg('');
+  });
+
+  $$('.pw-eye').forEach(btn => btn.onclick = () => {
+    const input = btn.previousElementSibling;
+    const showing = input.type === 'text';
+    input.type = showing ? 'password' : 'text';
+    btn.innerHTML = `<span class="ico">${showing ? 'eye' : 'eye-off'}</span>`;
+    btn.setAttribute('aria-label', showing ? 'Show password' : 'Hide password');
+    paintIcons(btn);
   });
 
   $('#form-in').onsubmit = async e => {

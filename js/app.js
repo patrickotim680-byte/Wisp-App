@@ -1,7 +1,7 @@
 import { initDb, sb, rpc } from './db.js';
 import { saveEnvLocally } from './env.js';
 import { S } from './state.js';
-import { $, $$, h, clear, toast, oops, paintIcons, initials, modal, closeModal, promptBox } from './util.js';
+import { $, $$, h, clear, toast, oops, paintIcons, initials, modal, closeModal, promptBox, setActiveNav } from './util.js';
 import { mountAuthUI, loadMe, twoStepGate, initIdentity, startPresence, signOut } from './auth.js';
 import { applySettings, saveSettings } from './theme.js';
 import { loadChats, loadFolders, renderChatList, openChat, closeChat, subscribeGlobal,
@@ -64,13 +64,22 @@ async function start() {
 const avatarFallback = name => 'data:image/svg+xml;utf8,' + encodeURIComponent(
   `<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64"><rect width="64" height="64" rx="32" fill="#d9d2c7"/><text x="32" y="40" font-family="sans-serif" font-size="24" fill="#4a4438" text-anchor="middle">${initials(name)}</text></svg>`);
 
+function cancelSearch() {
+  const q = $('#q');
+  q.value = '';
+  runSearch('');
+  $('#btn-search-cancel').classList.remove('is-shown');
+  q.blur();
+}
+
 function wireChrome() {
   $$('.rail-btn[data-nav]').forEach(btn => btn.onclick = async () => {
     const nav = btn.dataset.nav;
     if (nav === 'settings') return openSettings();
-    $$('.rail-btn[data-nav]').forEach(b => b.classList.toggle('is-on', b === btn));
+    setActiveNav(nav);
     S.view = nav;
     $('#q').value = '';
+    $('#btn-search-cancel').classList.remove('is-shown');
     openSide(null);
     if (nav === 'chats') { $('#list-title').textContent = 'Chats'; await loadFolders(); renderChatList(); }
     if (nav === 'people') viewPeople();
@@ -118,7 +127,17 @@ function wireChrome() {
     search.focus();
   };
 
-  $('#q').oninput = e => runSearch(e.target.value);
+  $('#q').oninput = e => {
+    runSearch(e.target.value);
+    $('#btn-search-cancel').classList.toggle('is-shown', e.target.value.length > 0);
+  };
+  $('#q').addEventListener('focus', () => {
+    if ($('#q').value) $('#btn-search-cancel').classList.add('is-shown');
+  });
+  $('#q').addEventListener('keydown', e => {
+    if (e.key === 'Escape') { e.stopPropagation(); cancelSearch(); }
+  });
+  $('#btn-search-cancel').onclick = cancelSearch;
   $('#btn-back').onclick = () => { $('#app').classList.remove('on-conv'); };
   $('#btn-info').onclick = openChatInfo;
   $('#conv-id').onclick = openChatInfo;

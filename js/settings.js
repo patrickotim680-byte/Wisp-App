@@ -20,14 +20,21 @@ function toggle(value, onchange) {
 }
 function segment(options, value, onpick) {
   const wrap = h('div', { class: 'seg' });
-  options.forEach(([val, label]) => wrap.append(h('button', {
+  wrap.style.setProperty('--seg-n', String(options.length));
+  wrap.append(h('span', { class: 'seg-glow' }));
+  options.forEach(([val, label], i) => wrap.append(h('button', {
+    type: 'button',
     onclick: e => {
-      [...wrap.children].forEach(c => c.classList.remove('is-on'));
+      [...wrap.querySelectorAll('button')].forEach(c => c.classList.remove('is-on'));
       e.currentTarget.classList.add('is-on');
+      wrap.style.setProperty('--seg-i', String(i));
       onpick(val);
     },
   }, label)));
-  [...wrap.children].forEach((c, i) => c.classList.toggle('is-on', options[i][0] === value));
+  const btns = [...wrap.querySelectorAll('button')];
+  const activeIdx = Math.max(0, options.findIndex(([v]) => v === value));
+  wrap.style.setProperty('--seg-i', String(activeIdx));
+  btns.forEach((c, i) => c.classList.toggle('is-on', i === activeIdx));
   return wrap;
 }
 function slider(min, max, step, value, oninput, fmt = v => v) {

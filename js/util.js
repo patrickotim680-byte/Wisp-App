@@ -44,6 +44,8 @@ const P = {
   edit: 'M4 20h4L20 8l-4-4L4 16z', file: 'M6 3h8l4 4v14H6zM14 3v4h4', lock: 'M6 11h12v10H6zM9 11V8a3 3 0 016 0v3',
   down: 'M12 5v14M6 13l6 6 6-6', bookmark: 'M6 4h12v17l-6-4-6 4z', copy: 'M8 8h12v12H8zM4 16V4h12',
   play: 'M7 4l12 8-12 8z', pause: 'M8 5h3v14H8zM13 5h3v14h-3z', globe: 'M12 21a9 9 0 100-18 9 9 0 000 18zM3 12h18M12 3c3 3.5 3 14.5 0 18M12 3c-3 3.5-3 14.5 0 18',
+  eye: 'M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8zM12 15a3 3 0 100-6 3 3 0 000 6z',
+  'eye-off': 'M3 3l18 18M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19m-6.72-1.07a3 3 0 11-4.24-4.24M6.61 6.61A18.45 18.45 0 001 12s4 8 11 8a10.94 10.94 0 005.39-1.39',
 };
 export function icon(name, size = 20) {
   const d = P[name] || P.info;
@@ -61,6 +63,17 @@ export function paintIcons(root = document) {
 export const iconEl = (name, size) => {
   const s = h('span'); s.innerHTML = icon(name, size); return s.firstChild;
 };
+
+/* ── shared nav-tab state (keeps the sliding glass indicator in sync
+   with whichever code path switches the active tab) ────────────────── */
+export function setActiveNav(name) {
+  const nav = $('.rail-nav');
+  $$('.rail-nav .rail-btn[data-nav]').forEach((b, i) => {
+    const on = b.dataset.nav === name;
+    b.classList.toggle('is-on', on);
+    if (on) nav?.style.setProperty('--rail-i', String(i));
+  });
+}
 
 /* ── time ─────────────────────────────────────────────────────────────── */
 const fmtTime = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' });

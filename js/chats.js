@@ -1,7 +1,7 @@
 import { sb, rpc, sel, upd, del, ins, channel, drop } from './db.js';
 import { S, emit, person } from './state.js';
 import { $, $$, h, clear, toast, oops, modal, closeModal, confirmBox, promptBox,
-         shortWhen, initials, lastSeenText, iconEl, debounce, esc } from './util.js';
+         shortWhen, initials, lastSeenText, iconEl, debounce, esc, setActiveNav } from './util.js';
 import { applyWallpaper, applyContactAccent, applySettings } from './theme.js';
 import { renderThread, appendMessage, patchStatus, patchReaction, loadMessages } from './thread.js';
 import { notify } from './notify.js';
@@ -306,7 +306,7 @@ export function updateBadge() {
 export async function startDm(userId) {
   const id = await rpc('get_or_create_dm', { p_other: userId });
   await loadChats();
-  $$('.rail-btn').forEach(b => b.classList.toggle('is-on', b.dataset.nav === 'chats'));
+  setActiveNav('chats');
   S.view = 'chats'; $('#list-title').textContent = 'Chats';
   renderFolders(); renderChatList();
   return openChat(id);
