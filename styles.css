@@ -16,7 +16,7 @@
   --on-accent:     oklch(0.98 0.01 var(--acc-h));
 
   --bg:      oklch(0.972 0.008 var(--hue-n));
-  --surface: oklch(0.995 0.004 var(--hue-n));
+  --surface: var(--bg);
   --sunken:  oklch(0.945 0.010 var(--hue-n));
   --line:    oklch(0.895 0.008 var(--hue-n));
   --line-soft: oklch(0.935 0.006 var(--hue-n));
