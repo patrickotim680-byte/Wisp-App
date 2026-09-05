@@ -28,6 +28,7 @@ async function main() {
 
   sb.auth.onAuthStateChange((event, session) => {
     if (event === 'SIGNED_IN' && !S.me) start();
+    if (S.me && session?.user?.id && session.user.id !== S.me.id) location.reload();
     if (event === 'SIGNED_OUT') location.reload();
   });
 
