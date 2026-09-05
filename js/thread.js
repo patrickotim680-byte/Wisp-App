@@ -12,22 +12,29 @@ export async function loadMessages() {
   const chatId = S.chat.chat_id;
   const { data, error } = await sb.from('messages')
     .select('*').eq('chat_id', chatId).order('created_at', { ascending: false }).limit(PAGE);
+  // The user may have switched to a different chat while this was in flight.
+  // Applying a late response for a chat that's no longer open is exactly how
+  // one conversation's messages end up showing under another one's name.
+  if (S.chat?.chat_id !== chatId) return;
   if (error) return oops(error);
   S.msgs = data.reverse();
   await hydrate(S.msgs);
+  if (S.chat?.chat_id !== chatId) return;
   renderThread(true);
   renderPinStrip();
 }
 
 export async function loadOlder() {
   if (!S.msgs.length) return;
+  const chatId = S.chat.chat_id;
   const oldest = S.msgs[0].created_at;
-  const { data } = await sb.from('messages').select('*').eq('chat_id', S.chat.chat_id)
+  const { data } = await sb.from('messages').select('*').eq('chat_id', chatId)
     .lt('created_at', oldest).order('created_at', { ascending: false }).limit(PAGE);
-  if (!data?.length) return;
+  if (S.chat?.chat_id !== chatId || !data?.length) return;
   const keepH = $('#thread').scrollHeight;
   S.msgs = [...data.reverse(), ...S.msgs];
   await hydrate(data);
+  if (S.chat?.chat_id !== chatId) return;
   renderThread(false);
   $('#thread').scrollTop = $('#thread').scrollHeight - keepH;
 }

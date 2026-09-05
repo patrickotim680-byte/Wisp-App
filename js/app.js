@@ -132,7 +132,10 @@ function wireChrome() {
     if (e.key === 'Escape') { e.stopPropagation(); cancelSearch(); }
   });
   $('#btn-search-cancel').onclick = cancelSearch;
-  $('#btn-back').onclick = () => { $('#app').classList.remove('on-conv'); };
+  // Previously this only toggled the CSS class, so the panel looked closed
+  // but S.chat/S.msgs and the realtime subscription stayed pointed at that
+  // chat — closeChat() does the full teardown instead.
+  $('#btn-back').onclick = closeChat;
   $('#btn-info').onclick = openChatInfo;
   $('#conv-id').onclick = openChatInfo;
   $('#btn-digest').onclick = () => openDigest();

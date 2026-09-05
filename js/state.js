@@ -4,6 +4,7 @@ export const S = {
   settings: null,      // user_settings row
   chats: [],           // chat_overview() rows
   chat: null,          // active overview row
+  chatToken: 0,        // bumped on every open/close so a superseded openChat() can bail out
   members: [],         // members of active chat (with profile)
   people: new Map(),   // user_id -> people_info row
   msgs: [],            // messages of active chat, ascending

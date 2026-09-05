@@ -163,6 +163,7 @@ function chatMenu(c) {
 }
 
 export function closeChat() {
+  S.chatToken++; // cancel any openChat() still resolving in the background
   S.chat = null; S.msgs = []; S.selection.clear();
   drop('chat');
   $('#conv-inner').hidden = true;
@@ -176,38 +177,59 @@ export async function openChat(chatId) {
   const c = S.chats.find(x => x.chat_id === chatId);
   if (!c) { await loadChats(); return openChat(chatId); }
 
+  // Every call gets its own token. If a newer openChat() (or closeChat())
+  // starts before this one finishes, S.chatToken moves on and every check
+  // below bails out — so a slow/racing load can never overwrite what the
+  // user is actually looking at with a different chat's data.
+  const myToken = ++S.chatToken;
+
   if (c.locked && !S.unlocked.has(chatId)) {
     const pin = await promptBox('Locked chat', { label: 'PIN', type: 'password' });
+    if (myToken !== S.chatToken) return;
     if (!pin) return;
     if (!await rpc('verify_chat_lock', { p_chat: chatId, p_pin: pin })) return toast('Wrong PIN.', true);
+    if (myToken !== S.chatToken) return;
     S.unlocked.add(chatId);
   }
 
-  S.chat = c; S.selection.clear(); S.replyTo = null;
+  // Switch and blank the thread *before* any network round trip. Previously
+  // the old messages stayed on screen — under the new chat's name — until
+  // the fetch below resolved; on a slow connection that's the "opens Mercy,
+  // shows the other chat's messages" bug. Now there's never a moment where
+  // a chat you're not in is still visible.
+  S.chat = c; S.msgs = []; S.members = []; S.selection.clear(); S.replyTo = null;
   $('#conv-empty').hidden = true;
   $('#conv-inner').hidden = false;
   $('#app').classList.add('on-conv');
   $('#select-bar').hidden = true;
   $('#reply-chip').hidden = true;
-
-  S.members = await sel('chat_members', { select: '*, profiles(*)', eq: { chat_id: chatId } });
-  await loadPeople(S.members.map(m => m.user_id));
-  const [stars, marks] = await Promise.all([
-    sel('stars', { eq: { user_id: S.me.id } }),
-    sel('bookmarks', { eq: { user_id: S.me.id } }),
-  ]);
-  S.starred = new Set(stars.map(s => s.message_id));
-  S.bookmarked = new Set(marks.map(s => s.message_id));
-
   renderConvHeader();
-  await loadMessages();
-  applyWallpaper();
-  if (c.type === 'dm') applyContactAccent(person(c.other_id)?.accent);
-  subscribeChat(chatId);
-  await rpc('mark_delivered', { p_chat: chatId }).catch(() => {});
-  await rpc('mark_read', { p_chat: chatId }).catch(() => {});
-  c.unread = 0;
-  renderChatList(); updateBadge();
+  renderThread(false);
+
+  try {
+    S.members = await sel('chat_members', { select: '*, profiles(*)', eq: { chat_id: chatId } });
+    if (myToken !== S.chatToken) return;
+    await loadPeople(S.members.map(m => m.user_id));
+    const [stars, marks] = await Promise.all([
+      sel('stars', { eq: { user_id: S.me.id } }),
+      sel('bookmarks', { eq: { user_id: S.me.id } }),
+    ]);
+    if (myToken !== S.chatToken) return;
+    S.starred = new Set(stars.map(s => s.message_id));
+    S.bookmarked = new Set(marks.map(s => s.message_id));
+
+    renderConvHeader();
+    await loadMessages();
+    if (myToken !== S.chatToken) return;
+    applyWallpaper();
+    if (c.type === 'dm') applyContactAccent(person(c.other_id)?.accent);
+    subscribeChat(chatId);
+    await rpc('mark_delivered', { p_chat: chatId }).catch(() => {});
+    await rpc('mark_read', { p_chat: chatId }).catch(() => {});
+    if (myToken !== S.chatToken) return;
+    c.unread = 0;
+    renderChatList(); updateBadge();
+  } catch (e) { oops(e); }
 }
 
 export function renderConvHeader() {
