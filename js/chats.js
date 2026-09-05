@@ -207,7 +207,7 @@ export async function openChat(chatId) {
   renderThread(false);
 
   try {
-    S.members = await sel('chat_members', { select: '*, profiles(*)', eq: { chat_id: chatId } });
+    S.members = await sel('chat_members', { select: '*', eq: { chat_id: chatId } });
     if (myToken !== S.chatToken) return;
     await loadPeople(S.members.map(m => m.user_id));
     const [stars, marks] = await Promise.all([

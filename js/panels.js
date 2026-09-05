@@ -90,9 +90,9 @@ export async function openChatInfo() {
         iAmAdmin && m.user_id !== S.me.id && h('button', {
           class: 'btn small ghost', onclick: () => modal(h('h3', { class: 'display' }, pp?.display_name || 'Member'),
             h('div', { class: 'stack' },
-              h('button', { class: 'btn', onclick: async () => { closeModal(); await rpc('set_member_role', { p_chat: c.chat_id, p_user: m.user_id, p_role: m.role === 'admin' ? 'member' : 'admin' }); S.members = await sel('chat_members', { select: '*, profiles(*)', eq: { chat_id: c.chat_id } }); openChatInfo(); } }, m.role === 'admin' ? 'Demote to member' : 'Make admin'),
+              h('button', { class: 'btn', onclick: async () => { closeModal(); await rpc('set_member_role', { p_chat: c.chat_id, p_user: m.user_id, p_role: m.role === 'admin' ? 'member' : 'admin' }); S.members = await sel('chat_members', { select: '*', eq: { chat_id: c.chat_id } }); openChatInfo(); } }, m.role === 'admin' ? 'Demote to member' : 'Make admin'),
               h('button', { class: 'btn', onclick: async () => { closeModal(); (await import('./chats.js')).startDm(m.user_id); } }, 'Message directly'),
-              h('button', { class: 'btn danger', onclick: async () => { closeModal(); await rpc('remove_member', { p_chat: c.chat_id, p_user: m.user_id }); S.members = await sel('chat_members', { select: '*, profiles(*)', eq: { chat_id: c.chat_id } }); openChatInfo(); } }, 'Remove from group'))),
+              h('button', { class: 'btn danger', onclick: async () => { closeModal(); await rpc('remove_member', { p_chat: c.chat_id, p_user: m.user_id }); S.members = await sel('chat_members', { select: '*', eq: { chat_id: c.chat_id } }); openChatInfo(); } }, 'Remove from group'))),
         }, '⋯'));
     }));
     const { data: chatRow } = await sb.from('chats').select('*').eq('id', c.chat_id).single();
@@ -110,7 +110,7 @@ export async function openChatInfo() {
                   try {
                     await ins('chat_members', { chat_id: c.chat_id, user_id: r.id });
                     await ins('messages', { chat_id: c.chat_id, sender_id: S.me.id, kind: 'system', body: `${r.display_name} was added` });
-                    S.members = await sel('chat_members', { select: '*, profiles(*)', eq: { chat_id: c.chat_id } });
+                    S.members = await sel('chat_members', { select: '*', eq: { chat_id: c.chat_id } });
                     openChatInfo();
                   } catch (e) { oops(e); }
                 },
@@ -176,7 +176,7 @@ export async function openChatInfo() {
             const path = `${S.me.id}/${crypto.randomUUID()}.webp`;
             await (await import('./db.js')).upload('wallpapers', path, blob, 'image/webp');
             await upd('chat_members', { wallpaper_url: path }, { chat_id: c.chat_id, user_id: S.me.id });
-            S.members = await sel('chat_members', { select: '*, profiles(*)', eq: { chat_id: c.chat_id } });
+            S.members = await sel('chat_members', { select: '*', eq: { chat_id: c.chat_id } });
             applyWallpaper(); toast('Chat wallpaper set');
           } catch (err) { oops(err); }
         } });
