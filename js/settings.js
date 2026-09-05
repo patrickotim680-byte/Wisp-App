@@ -205,7 +205,7 @@ function focusSection() {
   const s = S.settings;
   return h('section', {},
     h('h3', {}, 'Focus'),
-    row('Focus mode', toggle(s.focus_mode, v => { saveSettings({ focus_mode: v }); $('#btn-focus').classList.toggle('armed', v); }),
+    row('Focus mode', toggle(s.focus_mode, v => { saveSettings({ focus_mode: v }); }),
       'App-wide quiet: no sounds, no notifications, unread counts stay.'),
     row('Quiet hours', h('div', { style: { display: 'flex', gap: '6px' } },
       h('input', { type: 'time', value: s.quiet_from || '', onchange: e => saveSettings({ quiet_from: e.target.value || null }) }),

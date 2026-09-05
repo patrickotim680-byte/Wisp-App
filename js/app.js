@@ -46,7 +46,6 @@ async function start() {
     $('#app').hidden = false;
 
     $('#me-avatar').src = S.me.photo_url || avatarFallback(S.me.display_name);
-    $('#btn-focus').classList.toggle('armed', !!S.settings.focus_mode);
 
     mountThread(); mountComposer(); mountCalls(); wireChrome();
     await loadFolders();
@@ -75,8 +74,8 @@ function cancelSearch() {
 function wireChrome() {
   $$('.rail-btn[data-nav]').forEach(btn => btn.onclick = async () => {
     const nav = btn.dataset.nav;
-    if (nav === 'settings') return openSettings();
     setActiveNav(nav);
+    if (nav === 'settings') return openSettings();
     S.view = nav;
     $('#q').value = '';
     $('#btn-search-cancel').classList.remove('is-shown');
@@ -89,12 +88,6 @@ function wireChrome() {
   });
 
   $('#btn-me').onclick = openSettings;
-  $('#btn-focus').onclick = async e => {
-    const next = !S.settings.focus_mode;
-    await saveSettings({ focus_mode: next });
-    e.currentTarget.classList.toggle('armed', next);
-    toast(next ? 'Focus mode on: no sounds, no popups.' : 'Focus mode off.');
-  };
   $('#btn-new-group').onclick = () => modal(h('h3', { class: 'display' }, 'Start something'),
     h('div', { class: 'stack' },
       h('button', { class: 'btn', onclick: () => { closeModal(); newGroupFlow('group'); } }, 'New group'),
