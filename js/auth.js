@@ -152,7 +152,7 @@ export async function signOut() {
   try { await rpc('go_offline'); } catch {}
   forgetKeys();
   sessionStorage.removeItem('wisp.pw');
-  localStorage.removeItem('wisp.device');
+  sessionStorage.removeItem('wisp.device');
   dropAll();
   await sb.auth.signOut();
   location.reload();
@@ -160,7 +160,7 @@ export async function signOut() {
 export async function signOutEverywhere() {
   try { await rpc('go_offline'); } catch {}
   forgetKeys();
-  localStorage.removeItem('wisp.device');
+  sessionStorage.removeItem('wisp.device');
   await sb.auth.signOut({ scope: 'global' });
   location.reload();
 }

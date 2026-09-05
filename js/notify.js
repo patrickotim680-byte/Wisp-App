@@ -46,8 +46,8 @@ export function playSound() {
 export async function registerDevice() {
   try {
     const key = 'wisp.device';
-    let token = localStorage.getItem(key);
-    if (!token) { token = 'web:' + crypto.randomUUID(); localStorage.setItem(key, token); }
+    let token = sessionStorage.getItem(key);
+    if (!token) { token = 'web:' + crypto.randomUUID(); sessionStorage.setItem(key, token); }
     await sb.from('devices').upsert({
       user_id: S.me.id, token, platform: 'web',
       label: navigator.userAgent.slice(0, 60), last_active: new Date().toISOString(),

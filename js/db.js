@@ -7,7 +7,13 @@ export async function initDb() {
   const env = await loadEnv();
   if (!env) return null;
   sb = createClient(env.url, env.anonKey, {
-    auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true },
+    // sessionStorage (not localStorage) on purpose: localStorage is shared by
+    // every tab of the same origin, so two tabs signed into two accounts would
+    // fight over one session and Supabase's own cross-tab sync would flip one
+    // tab to the other account. sessionStorage is private per tab, so each tab
+    // keeps its own account — closing a tab ends that tab's session, same as
+    // opening a fresh browser profile per account would.
+    auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true, storage: window.sessionStorage },
     realtime: { params: { eventsPerSecond: 20 } },
   });
   return sb;
