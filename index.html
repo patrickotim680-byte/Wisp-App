@@ -27,32 +27,36 @@
 
 <!-- ── auth ─────────────────────────────────────────────────────────────── -->
 <section id="auth" class="pane-center" hidden>
-  <div class="auth-grid">
-    <aside class="auth-brand">
-      <div class="wordmark">wisp</div>
-      <p class="auth-pitch">Messages that behave the way you set them up. Your theme, your folders,
-        your quiet hours, on every device you sign in from.</p>
-      <ul class="auth-facts">
-        <li>Realtime delivery, read state, typing</li>
-        <li>Scheduled and recurring sends</li>
-        <li>Per-chat encryption, locks, disappearing timers</li>
-      </ul>
-    </aside>
-    <div class="auth-form">
+  <div class="auth-card">
+    <img class="auth-logo" src="/assets/wisp-logo.png" alt="Wisp" />
+    <h1 class="auth-word">Wisp Chat</h1>
+    <h2 id="auth-heading" class="auth-heading">Welcome back!</h2>
+    <p id="auth-sub" class="auth-sub">Sign in to continue your conversations</p>
+    <div class="auth-panel">
       <div class="tabs" role="tablist">
         <button class="tab is-on" data-authtab="in">Sign in</button>
         <button class="tab" data-authtab="up">Create account</button>
       </div>
       <form id="form-in" class="stack">
-        <label>Email<input type="email" name="email" autocomplete="email" required /></label>
-        <label>Password<input type="password" name="password" autocomplete="current-password" required /></label>
+        <label>Email<input type="email" name="email" placeholder="Enter your email" autocomplete="email" required /></label>
+        <label>Password
+          <div class="pw-shell">
+            <input type="password" name="password" placeholder="Enter your password" autocomplete="current-password" required />
+            <button type="button" class="pw-eye" id="btn-eye-in" aria-label="Show password"><span class="ico">eye</span></button>
+          </div>
+        </label>
         <button class="btn primary" type="submit">Sign in</button>
-        <button type="button" class="btn ghost" id="link-forgot">Forgot password</button>
+        <button type="button" class="link-btn" id="link-forgot">Forgot password</button>
       </form>
       <form id="form-up" class="stack" hidden>
-        <label>Display name<input name="display_name" required /></label>
-        <label>Email<input type="email" name="email" autocomplete="email" required /></label>
-        <label>Password<input type="password" name="password" minlength="8" autocomplete="new-password" required /></label>
+        <label>Display name<input name="display_name" placeholder="Enter your display name" required /></label>
+        <label>Email<input type="email" name="email" placeholder="Enter your email" autocomplete="email" required /></label>
+        <label>Password
+          <div class="pw-shell">
+            <input type="password" name="password" placeholder="Enter your password" minlength="8" autocomplete="new-password" required />
+            <button type="button" class="pw-eye" id="btn-eye-up" aria-label="Show password"><span class="ico">eye</span></button>
+          </div>
+        </label>
         <p class="hint">8 characters minimum. Also derives your encryption key, so a reset means old
           encrypted messages stay unreadable.</p>
         <button class="btn primary" type="submit">Create account</button>

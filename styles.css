@@ -124,23 +124,34 @@ input:focus, textarea:focus, select:focus { border-color: var(--accent); }
 .pane-center { min-height: 100%; display: grid; place-items: center; padding: 28px; }
 .sheet { width: min(440px, 100%); display: grid; gap: 14px; }
 
-.auth-grid {
-  width: min(880px, 100%); display: grid; grid-template-columns: 1.1fr 1fr;
-  border: 1px solid var(--line); border-radius: 22px; overflow: hidden;
-  background: var(--surface); box-shadow: var(--shadow);
+.auth-card { width: min(420px, 100%); display: grid; justify-items: center; gap: 4px; text-align: center; }
+.auth-logo { width: 84px; height: auto; margin-bottom: 6px; }
+.auth-word { font-size: 1.9rem; font-weight: 800; letter-spacing: -0.02em; color: var(--ink); margin-bottom: 14px; }
+.auth-heading { font-size: 1.3rem; font-weight: 700; color: var(--ink); }
+.auth-sub { color: var(--ink-2); font-size: 0.94em; margin-bottom: 18px; }
+.auth-panel {
+  width: 100%; background: var(--surface); border: 1px solid var(--line); border-radius: 22px;
+  padding: 22px; box-shadow: var(--shadow); display: grid; gap: 16px; text-align: left;
 }
-.auth-brand { background: var(--accent); color: var(--on-accent); padding: 40px 34px; display: grid; align-content: start; gap: 18px; }
-.wordmark { font-size: 2.1rem; letter-spacing: -0.03em; font-weight: 600; }
-.auth-pitch { max-width: 34ch; opacity: 0.92; }
-.auth-facts { list-style: none; padding: 0; display: grid; gap: 8px; font-size: 0.9em; opacity: 0.85; }
-.auth-facts li::before { content: "→ "; }
-.auth-form { padding: 34px 30px; display: grid; gap: 16px; align-content: start; }
 .tabs { display: flex; gap: 4px; background: var(--sunken); padding: 4px; border-radius: 999px; }
 .tab { flex: 1; border: none; background: none; padding: 8px; border-radius: 999px; cursor: pointer; color: var(--ink-2); }
 .tab.is-on { background: var(--surface); color: var(--ink); box-shadow: var(--shadow); }
 .auth-msg { min-height: 1.2em; font-size: 0.88em; color: var(--danger); }
 .auth-msg.ok { color: var(--good); }
-@media (max-width: 760px) { .auth-grid { grid-template-columns: 1fr } .auth-brand { display: none } }
+.pw-shell { position: relative }
+.pw-shell input { width: 100%; padding-right: 42px }
+.pw-eye {
+  position: absolute; right: 4px; top: 50%; transform: translateY(-50%);
+  width: 34px; height: 34px; border: none; background: none; cursor: pointer;
+  color: var(--ink-3); display: grid; place-items: center; border-radius: 8px;
+}
+.pw-eye:hover { color: var(--ink-2) }
+.link-btn {
+  border: none; background: none; color: var(--ink-2); cursor: pointer;
+  font-size: 0.9em; padding: 4px; justify-self: center; text-align: center;
+}
+.link-btn:hover { color: var(--ink); text-decoration: underline }
+@media (max-width: 480px) { .auth-panel { padding: 18px } }
 
 /* ── app frame ─────────────────────────────────────────────────────────── */
 .app {
