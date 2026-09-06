@@ -169,7 +169,7 @@ function chatMenu(c) {
 
 export function closeChat() {
   S.chatToken++; // cancel any openChat() still resolving in the background
-  S.chat = null; S.msgs = []; S.selection.clear();
+  S.chat = null; S.msgs = []; S.selection.clear(); S.msgsReady = false;
   drop('chat');
   $('#conv-inner').hidden = true;
   $('#conv-empty').hidden = false;
@@ -203,8 +203,20 @@ export async function openChat(chatId) {
   // shows the other chat's messages" bug. Now there's never a moment where
   // a chat you're not in is still visible.
   S.chat = c; S.msgs = []; S.members = []; S.selection.clear(); S.replyTo = null;
+  S.msgsReady = false;
+  // Set this chat's accent right now, synchronously, before anything below
+  // paints a single pixel. This used to run near the *end* of openChat() —
+  // after members, stars, bookmarks and messages had all loaded — so the
+  // thread would render a frame or two in the previous chat's accent and
+  // then visibly swap colour once that finally caught up (the "green then
+  // blue" flash). Contact accents are already sitting in S.people (loadPeople()
+  // fetched them for every chat back in loadChats()), so there's nothing to
+  // wait for. Non-DM chats fall back to the global accent the same way
+  // closeChat() does, so a group opened right after a custom-accent DM
+  // doesn't keep wearing that DM's colour.
+  applyContactAccent(c.type === 'dm' ? person(c.other_id)?.accent : null);
   // Synchronous, zero-latency: if this chat is already warm in memory (see
-  // warmCache() in loadChats()), paint its real history right now, in the
+  // warmCache()/warmAllCached()), paint its real history right now, in the
   // same tick as the tap — never a blank frame before it, not even briefly.
   applyCachedThread(getMemThread(chatId));
   $('#conv-empty').hidden = true;
@@ -242,7 +254,6 @@ export async function openChat(chatId) {
     // stars, and bookmarks reflect it instead of waiting for the next change.
     renderThread(false);
     applyWallpaper();
-    if (c.type === 'dm') applyContactAccent(person(c.other_id)?.accent);
     subscribeChat(chatId);
     await rpc('mark_delivered', { p_chat: chatId }).catch(() => {});
     await rpc('mark_read', { p_chat: chatId }).catch(() => {});

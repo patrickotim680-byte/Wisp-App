@@ -18,6 +18,7 @@ export function applyCachedThread(payload) {
   S.msgs = payload.msgs;
   mergeRows(S.status, payload.status, (a, b) => a.user_id === b.user_id);
   mergeRows(S.reacts, payload.reacts, (a, b) => a.user_id === b.user_id && a.emoji === b.emoji);
+  S.msgsReady = true;
   return true;
 }
 
@@ -42,12 +43,17 @@ export async function loadMessages() {
   if (error) {
     // We already showed the cached copy, so a flaky connection isn't a dead
     // end — only surface the error if there was nothing to fall back on.
+    // Note S.msgsReady stays false here if there was no cache either: a
+    // failed fetch hasn't confirmed anything, so it shouldn't get to claim
+    // "No messages yet" — that's a definite statement about a chat we
+    // actually just failed to check.
     if (!cached) return oops(error);
     return;
   }
   S.msgs = data.reverse();
   await hydrate(S.msgs);
   if (S.chat?.chat_id !== chatId) return;
+  S.msgsReady = true;
   renderThread(true);
   renderPinStrip();
 }
@@ -156,7 +162,12 @@ const saveCache = debounce(() => {
 export function renderThread(scroll = true) {
   const thread = $('#thread');
   if (!S.chat) return;
-  saveCache();
+  // Only write to disk once cache-or-network has actually confirmed S.msgs —
+  // otherwise the very first render of a cold-cache chat (S.msgs still []
+  // from the reset in openChat()) would debounce-save an "empty" snapshot
+  // over whatever real history disk already had, for the brief moment
+  // before the real data lands.
+  if (S.msgsReady) saveCache();
   clear(thread);
   let lastDay = '', lastSender = null;
   const visible = S.msgs.filter(m => !m.hiddenLocal);
@@ -167,7 +178,13 @@ export function renderThread(scroll = true) {
     thread.append(bubble(m, lastSender !== m.sender_id));
     lastSender = m.sender_id;
   });
-  if (!visible.length) thread.append(h('div', { class: 'empty' },
+  // "No messages yet" is only shown once that's actually been confirmed —
+  // by cache or network — for this chat. Before that, S.msgs is just the
+  // blank slate openChat() resets it to; asserting it's empty and then
+  // swapping in real history a moment later is exactly the "reloads every
+  // time" flash this is meant to avoid. Show nothing rather than a wrong
+  // answer.
+  if (!visible.length && S.msgsReady) thread.append(h('div', { class: 'empty' },
     h('p', {}, 'No messages yet'), h('p', { class: 'hint' }, 'Say something.')));
   if (scroll) requestAnimationFrame(() => { thread.scrollTop = thread.scrollHeight; });
   renderPinStrip();

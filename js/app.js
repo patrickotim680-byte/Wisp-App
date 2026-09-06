@@ -6,6 +6,7 @@ import { mountAuthUI, loadMe, twoStepGate, initIdentity, startPresence, signOut 
 import { applySettings, saveSettings } from './theme.js';
 import { loadChats, loadFolders, renderChatList, openChat, closeChat, subscribeGlobal,
          updateBadge, newGroupFlow, startDm, renderConvHeader } from './chats.js';
+import { warmAllCached } from './cache.js';
 import { mountThread, loadMessages } from './thread.js';
 import { mountComposer } from './composer.js';
 import { mountCalls, setIceServers } from './calls.js';
@@ -18,6 +19,14 @@ const boot = $('#boot');
 
 async function main() {
   paintIcons();
+  // Fire-and-forget, and deliberately first: this only touches IndexedDB, not
+  // the Supabase client, so there's no reason to wait for initDb()'s /api/config
+  // round trip to start it. It runs in parallel with every network step below
+  // (env, session, profile, folders, chat list) — by the time the chat list can
+  // even render, this has almost always already finished, so the very first
+  // chat tapped after signing back in is warm too, not just chats switched
+  // between mid-session.
+  warmAllCached();
   const client = await initDb();
   if (!client) return setupScreen();
 

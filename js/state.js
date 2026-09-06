@@ -8,6 +8,8 @@ export const S = {
   members: [],         // members of active chat (with profile)
   people: new Map(),   // user_id -> people_info row
   msgs: [],            // messages of active chat, ascending
+  msgsReady: false,    // true once cache-or-network has actually confirmed msgs for S.chat
+                        // (lets the empty-thread view tell "haven't checked yet" from "really empty")
   status: new Map(),   // message_id -> [{user_id, delivered_at, read_at}]
   reacts: new Map(),   // message_id -> [{user_id, emoji}]
   starred: new Set(),
