@@ -131,7 +131,6 @@
       </div>
 
       <div class="thread" id="thread"></div>
-      <div class="typing-line" id="typing-line"></div>
 
       <footer class="composer" id="composer">
         <div class="reply-chip" id="reply-chip" hidden></div>
@@ -148,8 +147,9 @@
           <button class="icon-btn send" id="btn-send" title="Send"><span class="ico">send</span></button>
         </div>
         <div class="rec-strip" id="rec-strip" hidden>
-          <span class="rec-dot"></span><span id="rec-time">0:00</span>
+          <span class="rec-dot" id="rec-dot"></span><span id="rec-time">0:00</span>
           <canvas id="rec-wave" height="28"></canvas>
+          <button class="icon-btn" id="rec-pause" title="Pause"><span class="ico">pause</span></button>
           <button class="btn small ghost" id="rec-cancel">Discard</button>
           <button class="btn small primary" id="rec-send">Send</button>
         </div>

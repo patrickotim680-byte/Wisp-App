@@ -105,8 +105,15 @@ input:focus, textarea:focus, select:focus { border-color: var(--accent); }
   transition: background 0.15s var(--ease), color 0.15s var(--ease);
 }
 .icon-btn:hover { background: var(--sunken); color: var(--ink); }
-.icon-btn.send { background: var(--accent); color: var(--on-accent); }
+.icon-btn.send {
+  background: var(--accent); color: var(--on-accent); border-radius: 50%;
+  transition: background 0.15s var(--ease), transform 0.12s var(--ease);
+}
 .icon-btn.send:hover { background: var(--accent-strong); }
+.icon-btn.send:active { transform: scale(0.92); }
+/* The send glyph is a filled paper plane, not an outline — override the
+   generic icon() stroke-only rendering just for this one button. */
+.icon-btn.send svg { fill: currentColor; stroke: none; }
 
 /* Placeholder for inline SVG icons; paintIcons() swaps these at boot. */
 .ico { font-size: 0; width: 20px; height: 20px; display: block; }
@@ -356,7 +363,6 @@ input:focus, textarea:focus, select:focus { border-color: var(--accent); }
 .poll-bar { height: 6px; border-radius: 999px; background: color-mix(in oklab, currentColor 18%, transparent); overflow: hidden }
 .poll-bar i { display: block; height: 100%; background: currentColor; opacity: 0.6 }
 
-.typing-line { min-height: 18px; padding: 0 clamp(12px, 4vw, 46px); font-size: 0.8em; color: var(--ink-2) }
 
 .composer { border-top: 1px solid var(--line); background: var(--surface); padding: 8px 12px 10px; display: grid; gap: 8px }
 .composer-main { display: flex; align-items: flex-end; gap: 4px }
@@ -376,6 +382,8 @@ input:focus, textarea:focus, select:focus { border-color: var(--accent); }
 .rec-strip { display: flex; align-items: center; gap: 10px }
 .rec-strip canvas { flex: 1 }
 .rec-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--danger); animation: pulse 1s infinite }
+.rec-dot.paused { animation: none; background: var(--ink-2); }
+.rec-strip #rec-pause { width: 32px; height: 32px; flex: none; }
 .mention-pop { position: absolute; bottom: calc(100% + 6px); left: 0; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); overflow: hidden; min-width: 220px; z-index: 5 }
 .mention-pop button { display: flex; gap: 8px; align-items: center; width: 100%; border: none; background: none; padding: 8px 12px; cursor: pointer; text-align: left; color: inherit }
 .mention-pop button:hover, .mention-pop button.on { background: var(--sunken) }

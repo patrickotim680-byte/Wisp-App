@@ -1,6 +1,6 @@
 import { sb, rpc, ins, upd, del } from './db.js';
 import { S, person, nameOf } from './state.js';
-import { $, h, clear, toast, oops, modal, closeModal, promptBox, uuid, dur, debounce, iconEl, initials } from './util.js';
+import { $, h, clear, toast, oops, modal, closeModal, promptBox, uuid, dur, debounce, icon, iconEl, initials } from './util.js';
 import { stageFile, uploadStaged } from './media.js';
 import { sealBody } from './crypto.js';
 import { renderThread, appendMessage } from './thread.js';
@@ -214,40 +214,62 @@ async function startRec() {
     const an = ctx.createAnalyser(); an.fftSize = 512;
     ctx.createMediaStreamSource(stream).connect(an);
     const buf = new Uint8Array(an.frequencyBinCount);
-    const cv = $('#rec-wave'), t0 = Date.now();
+    const cv = $('#rec-wave');
     $('#rec-strip').hidden = false;
+    rec = { mr, stream, chunks, peaks, ctx, t0: Date.now(), pausedAt: 0, pausedTotal: 0, paused: false };
+    setPauseUI(false);
     const tick = () => {
       if (!rec) return;
-      an.getByteTimeDomainData(buf);
-      let peak = 0;
-      for (const v of buf) peak = Math.max(peak, Math.abs(v - 128) / 128);
-      peaks.push(Math.min(1, peak * 1.6));
-      $('#rec-time').textContent = dur((Date.now() - t0) / 1000);
+      if (!rec.paused) {
+        an.getByteTimeDomainData(buf);
+        let peak = 0;
+        for (const v of buf) peak = Math.max(peak, Math.abs(v - 128) / 128);
+        peaks.push(Math.min(1, peak * 1.6));
+        $('#rec-time').textContent = dur((Date.now() - rec.t0 - rec.pausedTotal) / 1000);
+      }
       const w = cv.width = cv.clientWidth, hh = cv.height = 28;
       const g = cv.getContext('2d');
       g.clearRect(0, 0, w, hh);
-      g.fillStyle = getComputedStyle(document.body).getPropertyValue('--accent');
+      g.fillStyle = getComputedStyle(document.body).getPropertyValue(rec.paused ? '--ink-2' : '--accent');
       const show = peaks.slice(-Math.floor(w / 3));
       show.forEach((v, i) => { const bh = Math.max(2, v * hh); g.fillRect(i * 3, (hh - bh) / 2, 2, bh); });
       requestAnimationFrame(tick);
     };
     mr.ondataavailable = e => chunks.push(e.data);
     mr.start(120);
-    rec = { mr, stream, chunks, peaks, t0, ctx };
     requestAnimationFrame(tick);
   } catch (e) { oops(e); }
 }
+function toggleRecPause() {
+  if (!rec || rec.mr.state === 'inactive') return;
+  if (rec.paused) {
+    rec.mr.resume();
+    rec.pausedTotal += Date.now() - rec.pausedAt;
+    rec.paused = false;
+  } else {
+    rec.mr.pause();
+    rec.pausedAt = Date.now();
+    rec.paused = true;
+  }
+  setPauseUI(rec.paused);
+}
+function setPauseUI(isPaused) {
+  const btn = $('#rec-pause');
+  if (btn) { btn.innerHTML = icon(isPaused ? 'play' : 'pause', 16); btn.title = isPaused ? 'Resume' : 'Pause'; }
+  $('#rec-dot')?.classList.toggle('paused', isPaused);
+}
 async function stopRec(sendIt) {
   if (!rec) return;
-  const { mr, stream, chunks, peaks, t0, ctx } = rec;
+  const { mr, stream, chunks, peaks, t0, ctx, pausedTotal, paused, pausedAt } = rec;
   rec = null;
   $('#rec-strip').hidden = true;
-  await new Promise(r => { mr.onstop = r; mr.stop(); });
+  const finalPausedTotal = pausedTotal + (paused ? Date.now() - pausedAt : 0);
+  await new Promise(r => { if (mr.state === 'inactive') return r(); mr.onstop = r; mr.stop(); });
   stream.getTracks().forEach(t => t.stop());
   ctx.close();
   if (!sendIt) return;
   const blob = new Blob(chunks, { type: mr.mimeType });
-  const duration = (Date.now() - t0) / 1000;
+  const duration = (Date.now() - t0 - finalPausedTotal) / 1000;
   if (duration < 0.4) return toast('Too short.');
   const step = Math.max(1, Math.floor(peaks.length / 48));
   const wave = [];
@@ -337,6 +359,7 @@ export function mountComposer() {
   const mic = $('#btn-mic');
   mic.addEventListener('pointerdown', startRec);
   mic.addEventListener('pointerup', () => { if (rec) toast('Recording. Use Send or Discard.'); });
+  $('#rec-pause').onclick = toggleRecPause;
   $('#rec-send').onclick = () => stopRec(true);
   $('#rec-cancel').onclick = () => stopRec(false);
 

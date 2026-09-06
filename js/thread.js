@@ -4,24 +4,53 @@ import { $, $$, h, clear, esc, linkify, firstUrl, clock, dayLabel, dur, bytes, i
          toast, oops, modal, closeModal, confirmBox, promptBox, iconEl, debounce } from './util.js';
 import { attUrl, thumbUrl } from './media.js';
 import { openBody } from './crypto.js';
+import { getCachedThread, setCachedThread } from './cache.js';
 
 const PAGE = 80;
 let atBottom = true;
 
 export async function loadMessages() {
   const chatId = S.chat.chat_id;
+
+  // Paint instantly from whatever's already on disk for this chat, before
+  // any network round trip. This is the whole difference between "opens
+  // like a webpage" and "opens like WhatsApp": the chat you've already
+  // been in shows its full history the moment you tap it, then quietly
+  // reconciles with the server instead of making you stare at a blank
+  // thread (or "No messages yet") while it loads.
+  const cached = await getCachedThread(chatId);
+  if (cached && S.chat?.chat_id === chatId) {
+    S.msgs = cached.msgs;
+    mergeRows(S.status, cached.status, (a, b) => a.user_id === b.user_id);
+    mergeRows(S.reacts, cached.reacts, (a, b) => a.user_id === b.user_id && a.emoji === b.emoji);
+    renderThread(true);
+    renderPinStrip();
+  }
+
   const { data, error } = await sb.from('messages')
     .select('*').eq('chat_id', chatId).order('created_at', { ascending: false }).limit(PAGE);
   // The user may have switched to a different chat while this was in flight.
   // Applying a late response for a chat that's no longer open is exactly how
   // one conversation's messages end up showing under another one's name.
   if (S.chat?.chat_id !== chatId) return;
-  if (error) return oops(error);
+  if (error) {
+    // We already showed the cached copy, so a flaky connection isn't a dead
+    // end — only surface the error if there was nothing to fall back on.
+    if (!cached) return oops(error);
+    return;
+  }
   S.msgs = data.reverse();
   await hydrate(S.msgs);
   if (S.chat?.chat_id !== chatId) return;
   renderThread(true);
   renderPinStrip();
+}
+
+function mergeRows(map, rows, sameKey) {
+  (rows || []).forEach(r => {
+    const arr = map.get(r.message_id) || [];
+    if (!arr.some(x => sameKey(x, r))) map.set(r.message_id, [...arr, r]);
+  });
 }
 
 export async function loadOlder() {
@@ -101,9 +130,27 @@ function ticks(m) {
   return wrap;
 }
 
+// Debounced so a burst of updates (hydrate, reactions, ticks) writes to disk
+// once, not once per change. Runs off of renderThread so every path that
+// mutates the thread — send, receive, edit, react, delete — keeps the local
+// cache current with zero extra call sites to remember.
+const saveCache = debounce(() => {
+  const c = S.chat;
+  if (!c) return;
+  const real = S.msgs.filter(m => !String(m.id).startsWith('tmp-'));
+  const ids = real.map(m => m.id);
+  setCachedThread(c.chat_id, {
+    msgs: real,
+    status: ids.flatMap(id => S.status.get(id) || []),
+    reacts: ids.flatMap(id => S.reacts.get(id) || []),
+    at: Date.now(),
+  });
+}, 350);
+
 export function renderThread(scroll = true) {
   const thread = $('#thread');
   if (!S.chat) return;
+  saveCache();
   clear(thread);
   let lastDay = '', lastSender = null;
   const visible = S.msgs.filter(m => !m.hiddenLocal);

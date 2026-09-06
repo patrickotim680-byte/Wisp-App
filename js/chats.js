@@ -207,6 +207,13 @@ export async function openChat(chatId) {
   renderThread(false);
 
   try {
+    // Kick the message load off immediately, in parallel with the lookups
+    // below, instead of behind them. loadMessages() paints cached history
+    // (if any) with no network wait at all, so the chat's content shows up
+    // the instant you tap it — member/star/bookmark context fills in
+    // around it a beat later rather than gating the whole thread on itself.
+    const messagesP = loadMessages();
+
     S.members = await sel('chat_members', { select: '*', eq: { chat_id: chatId } });
     if (myToken !== S.chatToken) return;
     await loadPeople(S.members.map(m => m.user_id));
@@ -219,8 +226,12 @@ export async function openChat(chatId) {
     S.bookmarked = new Set(marks.map(s => s.message_id));
 
     renderConvHeader();
-    await loadMessages();
+    await messagesP;
     if (myToken !== S.chatToken) return;
+    // Member/star/bookmark context may have landed after the first paint(s)
+    // above — one cheap re-render (no re-scroll) makes sure author names,
+    // stars, and bookmarks reflect it instead of waiting for the next change.
+    renderThread(false);
     applyWallpaper();
     if (c.type === 'dm') applyContactAccent(person(c.other_id)?.accent);
     subscribeChat(chatId);
@@ -232,15 +243,24 @@ export async function openChat(chatId) {
   } catch (e) { oops(e); }
 }
 
+// Single source of truth for "who's typing right now" in a chat: entries
+// older than 6s are treated as stale (in case a DELETE event was ever
+// missed) so the indicator can't get stuck on forever.
+function activeTypers(chatId) {
+  const map = S.typing.get(chatId) || new Map();
+  const now = Date.now();
+  return [...map.entries()].filter(([u, ts]) => u !== S.me.id && now - ts < 6000).map(([u]) => u);
+}
+
 export function renderConvHeader() {
   const c = S.chat; if (!c) return;
   const p = person(c.other_id);
   $('#conv-name').textContent = c.name || 'Chat';
   const img = $('#conv-avatar');
   if (c.icon_url) { img.src = c.icon_url; img.hidden = false; } else img.hidden = true;
-  const typers = [...(S.typing.get(c.chat_id)?.keys() || [])].filter(u => u !== S.me.id);
+  const typers = activeTypers(c.chat_id);
   let sub;
-  if (typers.length) sub = typers.length === 1 ? `${person(typers[0])?.display_name?.split(' ')[0] || 'Someone'} is typing…` : 'several people typing…';
+  if (typers.length) sub = typers.length === 1 ? `${person(typers[0])?.display_name?.split(' ')[0] || 'Someone'} is typing…` : `${typers.length} people typing…`;
   else if (c.type === 'dm') sub = lastSeenText(p) || (p?.about ?? '');
   else sub = S.members.map(m => m.user_id === S.me.id ? 'You' : (person(m.user_id)?.display_name || '')).slice(0, 6).join(', ');
   $('#conv-sub').textContent = [c.e2ee ? '🔐' : '', c.disappear_seconds ? '⏳' : '', sub].filter(Boolean).join(' ');
@@ -272,7 +292,7 @@ export function subscribeChat(chatId) {
         const map = S.typing.get(chatId) || new Map();
         eventType === 'DELETE' ? map.delete(t.user_id) : map.set(t.user_id, Date.now());
         S.typing.set(chatId, map);
-        renderTyping();
+        renderConvHeader();
       })
     .on('postgres_changes', { event: '*', schema: 'public', table: 'poll_votes' }, () => renderThread(false)));
 }
@@ -304,17 +324,9 @@ export function inQuietHours() {
   return a <= b ? mins >= a && mins < b : mins >= a || mins < b;
 }
 
-export function renderTyping() {
-  const line = $('#typing-line'), c = S.chat;
-  if (!c) return;
-  const map = S.typing.get(c.chat_id) || new Map();
-  const live = [...map.entries()].filter(([, ts]) => Date.now() - ts < 6000).map(([u]) => u);
-  line.textContent = live.length
-    ? (live.length === 1 ? `${person(live[0])?.display_name || 'Someone'} is typing…` : `${live.length} people typing…`)
-    : '';
-  renderConvHeader();
-}
-setInterval(() => { if (S.chat) renderTyping(); }, 3000);
+// Sweeps the header's typing text away on its own once entries go stale,
+// even if no DELETE event ever arrives for them.
+setInterval(() => { if (S.chat) renderConvHeader(); }, 3000);
 
 export function updateBadge() {
   const n = S.chats.filter(c => !c.muted && !c.archived).reduce((a, c) => a + (c.unread || 0), 0);
