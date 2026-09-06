@@ -268,9 +268,9 @@ input:focus, textarea:focus, select:focus { border-color: var(--accent); }
 .empty { padding: 40px 22px; color: var(--ink-3); text-align: center; display: grid; gap: 6px }
 
 /* ── conversation ──────────────────────────────────────────────────────── */
-.conv { grid-area: conv; display: grid; min-height: 0; background: var(--bg); position: relative }
+.conv { grid-area: conv; display: grid; grid-template-rows: 1fr; min-height: 0; background: var(--bg); position: relative }
 .conv-empty { display: grid; place-content: center; justify-items: center; gap: 6px; text-align: center }
-.conv-inner { display: grid; grid-template-rows: auto auto auto 1fr auto auto; min-height: 0 }
+.conv-inner { display: grid; grid-template-rows: auto auto auto 1fr auto; min-height: 0 }
 .conv-head {
   display: flex; align-items: center; gap: 10px; padding: 10px 14px;
   border-bottom: 1px solid var(--line); background: var(--surface);
