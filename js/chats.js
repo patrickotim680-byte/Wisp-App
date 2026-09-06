@@ -3,8 +3,9 @@ import { S, emit, person } from './state.js';
 import { $, $$, h, clear, toast, oops, modal, closeModal, confirmBox, promptBox,
          shortWhen, initials, lastSeenText, iconEl, debounce, esc, setActiveNav } from './util.js';
 import { applyWallpaper, applyContactAccent, applySettings } from './theme.js';
-import { renderThread, appendMessage, patchStatus, patchReaction, loadMessages } from './thread.js';
+import { renderThread, appendMessage, patchStatus, patchReaction, loadMessages, applyCachedThread } from './thread.js';
 import { notify } from './notify.js';
+import { getMemThread, warmCache } from './cache.js';
 
 export async function loadPeople(ids) {
   const need = [...new Set(ids.filter(Boolean))].filter(id => !S.people.has(id));
@@ -55,6 +56,10 @@ export async function loadChats() {
   await loadPeople(S.chats.map(c => c.other_id));
   renderChatList();
   updateBadge();
+  // Pull every chat's last-known thread up from disk into the synchronous
+  // memory cache now, in the background — so by the time a chat actually
+  // gets tapped, openChat() can paint it with no I/O wait at all.
+  warmCache(S.chats.map(c => c.chat_id));
 }
 
 function matchesFolder(c) {
@@ -198,13 +203,17 @@ export async function openChat(chatId) {
   // shows the other chat's messages" bug. Now there's never a moment where
   // a chat you're not in is still visible.
   S.chat = c; S.msgs = []; S.members = []; S.selection.clear(); S.replyTo = null;
+  // Synchronous, zero-latency: if this chat is already warm in memory (see
+  // warmCache() in loadChats()), paint its real history right now, in the
+  // same tick as the tap — never a blank frame before it, not even briefly.
+  applyCachedThread(getMemThread(chatId));
   $('#conv-empty').hidden = true;
   $('#conv-inner').hidden = false;
   $('#app').classList.add('on-conv');
   $('#select-bar').hidden = true;
   $('#reply-chip').hidden = true;
   renderConvHeader();
-  renderThread(false);
+  renderThread(true);
 
   try {
     // Kick the message load off immediately, in parallel with the lookups

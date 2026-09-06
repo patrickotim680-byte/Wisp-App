@@ -9,20 +9,26 @@ import { getCachedThread, setCachedThread } from './cache.js';
 const PAGE = 80;
 let atBottom = true;
 
+// Applies a cached {msgs, status, reacts} payload onto live state without
+// rendering — shared by openChat() (synchronous, from the in-memory layer)
+// and loadMessages() below (from disk/network), so both go through the
+// same merge logic. Returns whether there was anything to apply.
+export function applyCachedThread(payload) {
+  if (!payload) return false;
+  S.msgs = payload.msgs;
+  mergeRows(S.status, payload.status, (a, b) => a.user_id === b.user_id);
+  mergeRows(S.reacts, payload.reacts, (a, b) => a.user_id === b.user_id && a.emoji === b.emoji);
+  return true;
+}
+
 export async function loadMessages() {
   const chatId = S.chat.chat_id;
 
-  // Paint instantly from whatever's already on disk for this chat, before
-  // any network round trip. This is the whole difference between "opens
-  // like a webpage" and "opens like WhatsApp": the chat you've already
-  // been in shows its full history the moment you tap it, then quietly
-  // reconciles with the server instead of making you stare at a blank
-  // thread (or "No messages yet") while it loads.
+  // openChat() already paints the in-memory cache synchronously before this
+  // even runs (see chats.js) — this call mainly covers the case where this
+  // chat hasn't been touched yet this session and only disk has it.
   const cached = await getCachedThread(chatId);
-  if (cached && S.chat?.chat_id === chatId) {
-    S.msgs = cached.msgs;
-    mergeRows(S.status, cached.status, (a, b) => a.user_id === b.user_id);
-    mergeRows(S.reacts, cached.reacts, (a, b) => a.user_id === b.user_id && a.emoji === b.emoji);
+  if (cached && S.chat?.chat_id === chatId && applyCachedThread(cached)) {
     renderThread(true);
     renderPinStrip();
   }
