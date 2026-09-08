@@ -217,7 +217,7 @@ function bubble(m, showAuthor) {
     renderBody(m, bub);
     if (m.body) {
       const url = firstUrl(m.body);
-      if (url && !m.attachment) linkPreview(url, bub);
+      if (url && !m.attachment) linkPreview(url, bub).catch(() => {});
     }
   }
 
@@ -413,8 +413,14 @@ async function pollView(m, bub) {
 
 /* ── link previews (cached in DB, filled by an Edge Function) ──────────── */
 const previewSeen = new Set();
+// url can be user-typed text a naive regex flagged as a "link" (bad port,
+// stray punctuation, missing scheme, etc.) — new URL() throws TypeError on
+// any of that, and since linkPreview() is fired without await (see call
+// site below), an uncaught throw here becomes a silent unhandled promise
+// rejection instead of ever showing up as a message the user can act on.
+const safeHost = url => { try { return new URL(url).hostname; } catch { return url; } };
 async function linkPreview(url, bub) {
-  const card = h('div', { class: 'preview-card' }, h('small', {}, new URL(url).hostname));
+  const card = h('div', { class: 'preview-card' }, h('small', {}, safeHost(url)));
   bub.append(card);
   try {
     let { data } = await sb.from('link_previews').select('*').eq('url', url).maybeSingle();
@@ -428,7 +434,7 @@ async function linkPreview(url, bub) {
       data.image && h('img', { src: data.image, loading: 'lazy', style: { borderRadius: '8px', maxHeight: '150px', objectFit: 'cover' } }),
       h('b', {}, data.title || url),
       data.description && h('small', {}, data.description.slice(0, 160)),
-      h('small', { class: 'hint' }, data.site || new URL(url).hostname));
+      h('small', { class: 'hint' }, data.site || safeHost(url)));
   } catch { /* preview is a nicety, never block the message */ }
 }
 

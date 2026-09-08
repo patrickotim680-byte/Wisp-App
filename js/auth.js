@@ -168,9 +168,25 @@ export async function signOutEverywhere() {
 let hb;
 export function startPresence() {
   const beat = () => { if (document.visibilityState === 'visible') rpc('heartbeat').catch(() => {}); };
+  // autoRefreshToken schedules its refresh with setTimeout, which browsers
+  // throttle (or fully suspend) while a tab is backgrounded — a phone
+  // screen locking or a tab sitting behind others for a while is normal,
+  // everyday use, not an edge case. That timer can miss its window
+  // entirely, leaving a stale access token in memory; the first request
+  // made with it then gets rejected by any `to authenticated` RLS policy
+  // (surfacing as a confusing "row-level security" error, not an auth
+  // error, since the token still verifies — it's just for a session
+  // Postgres no longer trusts the way the client thinks it does). Calling
+  // getSession() on resume forces a check, and Supabase transparently
+  // refreshes if the local session is expired, before anything else fires
+  // an API call.
+  const resumeSession = () => sb.auth.getSession().catch(() => {});
   beat();
   hb = setInterval(beat, 25000);
-  document.addEventListener('visibilitychange', () => document.visibilityState === 'visible' ? beat() : rpc('go_offline').catch(() => {}));
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') { resumeSession(); beat(); }
+    else rpc('go_offline').catch(() => {});
+  });
   addEventListener('pagehide', () => { try { rpc('go_offline'); } catch {} });
 }
 export const stopPresence = () => clearInterval(hb);

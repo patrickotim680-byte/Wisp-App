@@ -1,0 +1,143 @@
+diff --git a/.vercelignore b/.vercelignore
+new file mode 100644
+index 0000000..73c08dd
+--- /dev/null
++++ b/.vercelignore
+@@ -0,0 +1,6 @@
++# This project has no build step, so Vercel's static preset ships every file
++# in the repo as a public asset unless excluded here. supabase/ is backend-only
++# tooling (schema.sql, RLS policy source, edge function source) that the CLI
++# needs locally but the browser never should — without this file it was
++# reachable at https://<your-domain>/supabase/schema.sql.
++supabase
+diff --git a/js/auth.js b/js/auth.js
+index df47556..a069783 100644
+--- a/js/auth.js
++++ b/js/auth.js
+@@ -168,9 +168,25 @@ export async function signOutEverywhere() {
+ let hb;
+ export function startPresence() {
+   const beat = () => { if (document.visibilityState === 'visible') rpc('heartbeat').catch(() => {}); };
++  // autoRefreshToken schedules its refresh with setTimeout, which browsers
++  // throttle (or fully suspend) while a tab is backgrounded — a phone
++  // screen locking or a tab sitting behind others for a while is normal,
++  // everyday use, not an edge case. That timer can miss its window
++  // entirely, leaving a stale access token in memory; the first request
++  // made with it then gets rejected by any `to authenticated` RLS policy
++  // (surfacing as a confusing "row-level security" error, not an auth
++  // error, since the token still verifies — it's just for a session
++  // Postgres no longer trusts the way the client thinks it does). Calling
++  // getSession() on resume forces a check, and Supabase transparently
++  // refreshes if the local session is expired, before anything else fires
++  // an API call.
++  const resumeSession = () => sb.auth.getSession().catch(() => {});
+   beat();
+   hb = setInterval(beat, 25000);
+-  document.addEventListener('visibilitychange', () => document.visibilityState === 'visible' ? beat() : rpc('go_offline').catch(() => {}));
++  document.addEventListener('visibilitychange', () => {
++    if (document.visibilityState === 'visible') { resumeSession(); beat(); }
++    else rpc('go_offline').catch(() => {});
++  });
+   addEventListener('pagehide', () => { try { rpc('go_offline'); } catch {} });
+ }
+ export const stopPresence = () => clearInterval(hb);
+diff --git a/js/composer.js b/js/composer.js
+index 6a08708..974e368 100644
+--- a/js/composer.js
++++ b/js/composer.js
+@@ -76,6 +76,25 @@ export async function pushMessage(base) {
+     if (i >= 0) S.msgs[i] = { ...saved, body: base.body ?? saved.body };
+     renderThread(false);
+   } catch (e) {
++    // 42501 here is most often a stale access token (tab was backgrounded
++    // long enough that autoRefreshToken's timer missed its window — see
++    // startPresence() in auth.js) rather than a genuine permission problem.
++    // One refresh-and-retry resolves that case silently; anything else
++    // (actually blocked, actually removed, actually admin-only, or a dead
++    // refresh token) still fails the retry and falls through to the normal
++    // error handling below, unchanged.
++    if (e?.code === '42501') {
++      try {
++        const { data } = await sb.auth.refreshSession();
++        if (data?.session) {
++          const [saved] = await ins('messages', row);
++          const i = S.msgs.findIndex(m => m.id === temp.id);
++          if (i >= 0) S.msgs[i] = { ...saved, body: base.body ?? saved.body };
++          renderThread(false);
++          return;
++        }
++      } catch { /* fall through to the original error below */ }
++    }
+     temp.pendingSend = false; temp.failed = true;
+     renderThread(false);
+     throw e;
+diff --git a/js/thread.js b/js/thread.js
+index 96d112c..36d21c7 100644
+--- a/js/thread.js
++++ b/js/thread.js
+@@ -217,7 +217,7 @@ function bubble(m, showAuthor) {
+     renderBody(m, bub);
+     if (m.body) {
+       const url = firstUrl(m.body);
+-      if (url && !m.attachment) linkPreview(url, bub);
++      if (url && !m.attachment) linkPreview(url, bub).catch(() => {});
+     }
+   }
+ 
+@@ -413,8 +413,14 @@ async function pollView(m, bub) {
+ 
+ /* ── link previews (cached in DB, filled by an Edge Function) ──────────── */
+ const previewSeen = new Set();
++// url can be user-typed text a naive regex flagged as a "link" (bad port,
++// stray punctuation, missing scheme, etc.) — new URL() throws TypeError on
++// any of that, and since linkPreview() is fired without await (see call
++// site below), an uncaught throw here becomes a silent unhandled promise
++// rejection instead of ever showing up as a message the user can act on.
++const safeHost = url => { try { return new URL(url).hostname; } catch { return url; } };
+ async function linkPreview(url, bub) {
+-  const card = h('div', { class: 'preview-card' }, h('small', {}, new URL(url).hostname));
++  const card = h('div', { class: 'preview-card' }, h('small', {}, safeHost(url)));
+   bub.append(card);
+   try {
+     let { data } = await sb.from('link_previews').select('*').eq('url', url).maybeSingle();
+@@ -428,7 +434,7 @@ async function linkPreview(url, bub) {
+       data.image && h('img', { src: data.image, loading: 'lazy', style: { borderRadius: '8px', maxHeight: '150px', objectFit: 'cover' } }),
+       h('b', {}, data.title || url),
+       data.description && h('small', {}, data.description.slice(0, 160)),
+-      h('small', { class: 'hint' }, data.site || new URL(url).hostname));
++      h('small', { class: 'hint' }, data.site || safeHost(url)));
+   } catch { /* preview is a nicety, never block the message */ }
+ }
+ 
+diff --git a/js/util.js b/js/util.js
+index 48592aa..5ba0153 100644
+--- a/js/util.js
++++ b/js/util.js
+@@ -115,7 +115,26 @@ export function toast(msg, bad = false) {
+   $('#toasts').append(t);
+   setTimeout(() => { t.style.opacity = '0'; setTimeout(() => t.remove(), 300); }, bad ? 4200 : 2400);
+ }
+-export const oops = e => { console.error(e); toast(e?.message || String(e), true); };
++// A handful of Postgres/PostgREST errors are common enough, and ugly enough
++// raw, that they're worth translating. oops() is the shared catch-all handler
++// (calls, reactions, group edits, message sends all funnel through it), so
++// this has to stay generic rather than assuming "send" specifically.
++// 42501 is Postgres's SQLSTATE for "row rejected by an RLS policy" — the
++// with-check clauses involved (can_send/is_admin/etc.) don't tell us which
++// sub-condition failed, so the copy stays honest about the real possible
++// causes instead of guessing one. In practice the most common trigger is a
++// stale auth session (e.g. the tab sat backgrounded long enough that the
++// access token wasn't refreshed in time) — composer.js already retries a
++// failed send once after a session refresh before this message can even
++// show, so by the time someone sees this it's usually genuinely a
++// permission issue, not just a token that needed refreshing.
++// Anything we haven't special-cased still falls through to the raw message,
++// so new/unexpected errors are never hidden.
++function friendlyMessage(e) {
++  if (e?.code === '42501') return "That didn't go through — you may be blocked, have left this chat, or it needs admin rights. If that's not it, try signing out and back in.";
++  return e?.message || String(e);
++}
++export const oops = e => { console.error(e); toast(friendlyMessage(e), true); };
+ 
+ export function modal(...nodes) {
+   const dlg = $('#modal'), body = clear($('#modal-body'));

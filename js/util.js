@@ -115,7 +115,26 @@ export function toast(msg, bad = false) {
   $('#toasts').append(t);
   setTimeout(() => { t.style.opacity = '0'; setTimeout(() => t.remove(), 300); }, bad ? 4200 : 2400);
 }
-export const oops = e => { console.error(e); toast(e?.message || String(e), true); };
+// A handful of Postgres/PostgREST errors are common enough, and ugly enough
+// raw, that they're worth translating. oops() is the shared catch-all handler
+// (calls, reactions, group edits, message sends all funnel through it), so
+// this has to stay generic rather than assuming "send" specifically.
+// 42501 is Postgres's SQLSTATE for "row rejected by an RLS policy" — the
+// with-check clauses involved (can_send/is_admin/etc.) don't tell us which
+// sub-condition failed, so the copy stays honest about the real possible
+// causes instead of guessing one. In practice the most common trigger is a
+// stale auth session (e.g. the tab sat backgrounded long enough that the
+// access token wasn't refreshed in time) — composer.js already retries a
+// failed send once after a session refresh before this message can even
+// show, so by the time someone sees this it's usually genuinely a
+// permission issue, not just a token that needed refreshing.
+// Anything we haven't special-cased still falls through to the raw message,
+// so new/unexpected errors are never hidden.
+function friendlyMessage(e) {
+  if (e?.code === '42501') return "That didn't go through — you may be blocked, have left this chat, or it needs admin rights. If that's not it, try signing out and back in.";
+  return e?.message || String(e);
+}
+export const oops = e => { console.error(e); toast(friendlyMessage(e), true); };
 
 export function modal(...nodes) {
   const dlg = $('#modal'), body = clear($('#modal-body'));

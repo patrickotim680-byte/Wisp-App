@@ -1,0 +1,6 @@
+# This project has no build step, so Vercel's static preset ships every file
+# in the repo as a public asset unless excluded here. supabase/ is backend-only
+# tooling (schema.sql, RLS policy source, edge function source) that the CLI
+# needs locally but the browser never should — without this file it was
+# reachable at https://<your-domain>/supabase/schema.sql.
+supabase

@@ -76,6 +76,25 @@ export async function pushMessage(base) {
     if (i >= 0) S.msgs[i] = { ...saved, body: base.body ?? saved.body };
     renderThread(false);
   } catch (e) {
+    // 42501 here is most often a stale access token (tab was backgrounded
+    // long enough that autoRefreshToken's timer missed its window — see
+    // startPresence() in auth.js) rather than a genuine permission problem.
+    // One refresh-and-retry resolves that case silently; anything else
+    // (actually blocked, actually removed, actually admin-only, or a dead
+    // refresh token) still fails the retry and falls through to the normal
+    // error handling below, unchanged.
+    if (e?.code === '42501') {
+      try {
+        const { data } = await sb.auth.refreshSession();
+        if (data?.session) {
+          const [saved] = await ins('messages', row);
+          const i = S.msgs.findIndex(m => m.id === temp.id);
+          if (i >= 0) S.msgs[i] = { ...saved, body: base.body ?? saved.body };
+          renderThread(false);
+          return;
+        }
+      } catch { /* fall through to the original error below */ }
+    }
     temp.pendingSend = false; temp.failed = true;
     renderThread(false);
     throw e;
