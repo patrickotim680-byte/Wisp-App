@@ -73,10 +73,9 @@ async function accessToken(): Promise<string | null> {
 }
 
 // Quiet hours are compared in UTC because that is all the row gives us: the
-// times are stored without a zone. Someone several hours off UTC will get a
-// window that does not match their clock — fixing that properly needs a
-// timezone on user_settings, so it is left visible here rather than papered
-// over with a guess.
+// times are stored without a zone. Someone several hours off UTC gets a window
+// that does not match their clock — fixing that properly needs a timezone on
+// user_settings, so it is left visible here rather than papered over.
 function inQuietHours(from: string | null, to: string | null): boolean {
   if (!from || !to) return false;
   const now = new Date();
@@ -131,18 +130,11 @@ Deno.serve(async req => {
         ? (m.body ? String(m.body).slice(0, 160) : `[${m.kind}]`)
         : preview === 'sender_only' ? 'sent you a message' : 'New message';
 
-      // So the app badge is right the moment the notification lands, rather
-      // than only after the app is opened.
-      const { count: unread } = await db.from('messages')
-        .select('id', { count: 'exact', head: true })
-        .eq('chat_id', m.chat_id)
-        .neq('sender_id', t.user_id);
-
       const payload = {
         title, body: bodyText,
         data: {
           chat_id: m.chat_id, message_id: m.id ?? '', kind: m.kind ?? 'text',
-          title, body: bodyText, unread: unread ?? 0,
+          title, body: bodyText,
         },
       };
 
