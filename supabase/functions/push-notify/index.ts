@@ -2,22 +2,37 @@
 // pushes to every device of every other chat member, honouring mute, focus
 // mode, quiet hours, notify_level and notification-preview privacy.
 //
-// Transport: FCM HTTP v1. Android high-priority pushes ring through a closed
-// app. iOS lock-screen ringing needs native CallKit/PushKit and cannot be done
-// from this codebase; see the README.
+// Two transports, chosen per device row:
+//   platform 'webpush' -> real Web Push to the browser's endpoint, encrypted
+//                          with the VAPID key pair. This is the one that makes
+//                          notifications arrive with the app closed.
+//   anything else      -> FCM HTTP v1, for native tokens.
+//
+// Android high-priority pushes ring through a closed app. iOS lock-screen
+// ringing needs native CallKit/PushKit and cannot be done from this codebase;
+// an installed PWA on iOS 16.4+ does get ordinary Web Push.
 //
 // Deploy:  supabase functions deploy push-notify --no-verify-jwt
-// Secrets: SERVICE_ROLE_KEY, SUPABASE_URL, FCM_PROJECT_ID, FCM_CLIENT_EMAIL, FCM_PRIVATE_KEY
+// Secrets: SERVICE_ROLE_KEY, SUPABASE_URL,
+//          VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY, VAPID_SUBJECT,
+//          FCM_PROJECT_ID, FCM_CLIENT_EMAIL, FCM_PRIVATE_KEY  (FCM optional)
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.4';
+import webpush from 'npm:web-push@3.6.7';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SERVICE_ROLE = Deno.env.get('SERVICE_ROLE_KEY')!;
 const FCM_PROJECT = Deno.env.get('FCM_PROJECT_ID') ?? '';
 const FCM_EMAIL = Deno.env.get('FCM_CLIENT_EMAIL') ?? '';
 const FCM_KEY = (Deno.env.get('FCM_PRIVATE_KEY') ?? '').replace(/\\n/g, '\n');
+const VAPID_PUBLIC = Deno.env.get('VAPID_PUBLIC_KEY') ?? '';
+const VAPID_PRIVATE = Deno.env.get('VAPID_PRIVATE_KEY') ?? '';
+const VAPID_SUBJECT = Deno.env.get('VAPID_SUBJECT') ?? 'mailto:admin@example.com';
 
 const db = createClient(SUPABASE_URL, SERVICE_ROLE, { auth: { persistSession: false } });
+
+const webPushReady = Boolean(VAPID_PUBLIC && VAPID_PRIVATE);
+if (webPushReady) webpush.setVapidDetails(VAPID_SUBJECT, VAPID_PUBLIC, VAPID_PRIVATE);
 
 /* ── FCM auth: sign a service-account JWT, exchange for an access token ── */
 let cachedToken: { token: string; exp: number } | null = null;
@@ -57,6 +72,10 @@ async function accessToken(): Promise<string | null> {
   return json.access_token;
 }
 
+// Quiet hours are compared in UTC because that is all the row gives us: the
+// times are stored without a zone. Someone several hours off UTC gets a window
+// that does not match their clock — fixing that properly needs a timezone on
+// user_settings, so it is left visible here rather than papered over.
 function inQuietHours(from: string | null, to: string | null): boolean {
   if (!from || !to) return false;
   const now = new Date();
@@ -65,6 +84,10 @@ function inQuietHours(from: string | null, to: string | null): boolean {
   const [th, tm] = to.split(':').map(Number);
   const a = fh * 60 + fm, b = th * 60 + tm;
   return a <= b ? mins >= a && mins < b : mins >= a || mins < b;
+}
+
+async function forgetDevice(token: string) {
+  await db.from('devices').delete().eq('token', token);
 }
 
 Deno.serve(async req => {
@@ -94,46 +117,68 @@ Deno.serve(async req => {
       db.from('user_settings').select('user_id, notif_preview, focus_mode, quiet_from, quiet_to').in('user_id', ids),
       db.from('devices').select('user_id, token, platform').in('user_id', ids),
     ]);
-    const token = await accessToken();
-    const sent: string[] = [];
+    const fcmToken = await accessToken();
+    let webSent = 0, fcmSent = 0, skipped = 0;
 
     for (const t of targets) {
       const s = (settings ?? []).find(x => x.user_id === t.user_id);
-      if (s?.focus_mode || inQuietHours(s?.quiet_from ?? null, s?.quiet_to ?? null)) continue;
+      if (s?.focus_mode || inQuietHours(s?.quiet_from ?? null, s?.quiet_to ?? null)) { skipped++; continue; }
       const who = chat?.type === 'dm' ? (sender?.display_name ?? 'New message') : (chat?.name ?? 'Group');
       const preview = s?.notif_preview ?? 'full';
       const title = preview === 'hidden' ? 'Wisp' : who;
       const bodyText = preview === 'full'
         ? (m.body ? String(m.body).slice(0, 160) : `[${m.kind}]`)
-        : 'New message';
+        : preview === 'sender_only' ? 'sent you a message' : 'New message';
+
+      const payload = {
+        title, body: bodyText,
+        data: {
+          chat_id: m.chat_id, message_id: m.id ?? '', kind: m.kind ?? 'text',
+          title, body: bodyText,
+        },
+      };
 
       for (const d of (devices ?? []).filter(x => x.user_id === t.user_id)) {
-        if (!token) { console.log('no FCM credentials: would notify', d.token, title); continue; }
-        const payload = {
+        if (d.platform === 'webpush') {
+          if (!webPushReady) { console.log('no VAPID keys: would web-push', title); continue; }
+          let sub: unknown;
+          try { sub = JSON.parse(d.token); } catch { await forgetDevice(d.token); continue; }
+          try {
+            await webpush.sendNotification(sub, JSON.stringify(payload), { TTL: 120, urgency: 'high' });
+            webSent++;
+          } catch (e: any) {
+            const code = e?.statusCode;
+            console.warn('web push failed', code, e?.body ?? e?.message);
+            // 404/410 mean the browser retired that endpoint for good.
+            if (code === 404 || code === 410) await forgetDevice(d.token);
+          }
+          continue;
+        }
+
+        if (!fcmToken) { console.log('no FCM credentials: would notify', d.token, title); continue; }
+        const fcm = {
           message: {
             token: d.token,
             notification: { title, body: bodyText },
-            data: { chat_id: m.chat_id, message_id: m.id ?? '', kind: m.kind ?? 'text', title, body: bodyText },
-            android: { priority: m.kind === 'call' ? 'HIGH' : 'HIGH', ttl: '120s' },
+            data: Object.fromEntries(Object.entries(payload.data).map(([k, v]) => [k, String(v)])),
+            android: { priority: 'HIGH', ttl: '120s' },
             apns: { headers: { 'apns-priority': '10' } },
           },
         };
         const r = await fetch(`https://fcm.googleapis.com/v1/projects/${FCM_PROJECT}/messages:send`, {
           method: 'POST',
-          headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
-          body: JSON.stringify(payload),
+          headers: { authorization: `Bearer ${fcmToken}`, 'content-type': 'application/json' },
+          body: JSON.stringify(fcm),
         });
-        if (r.ok) sent.push(d.token);
+        if (r.ok) fcmSent++;
         else {
           const err = await r.text();
           console.warn('fcm send failed', err);
-          if (err.includes('UNREGISTERED') || err.includes('NOT_FOUND')) {
-            await db.from('devices').delete().eq('token', d.token);
-          }
+          if (err.includes('UNREGISTERED') || err.includes('NOT_FOUND')) await forgetDevice(d.token);
         }
       }
     }
-    return Response.json({ notified: sent.length });
+    return Response.json({ webPush: webSent, fcm: fcmSent, quietOrFocus: skipped });
   } catch (e) {
     console.error(e);
     return new Response(String(e), { status: 500 });

@@ -1,7 +1,8 @@
 import { initDb, sb, rpc } from './db.js';
 import { saveEnvLocally, forgetEnvLocally, normalizeUrl, normalizeKey, envError } from './env.js';
 import { S } from './state.js';
-import { $, $$, h, clear, toast, oops, paintIcons, initials, modal, closeModal, promptBox, setActiveNav } from './util.js';
+import { $, $$, h, clear, toast, oops, paintIcons, initials, modal, closeModal, promptBox,
+         actionSheet, setActiveNav } from './util.js';
 import { mountAuthUI, loadMe, twoStepGate, initIdentity, startPresence, signOut } from './auth.js';
 import { applySettings, saveSettings } from './theme.js';
 import { loadChats, loadFolders, renderChatList, openChat, closeChat, subscribeGlobal,
@@ -13,16 +14,16 @@ import { mountCalls, setIceServers } from './calls.js';
 import { openChatInfo, openDigest, searchInChat, runSearch, viewPeople, viewCalls,
          viewSaved, viewScheduled, openSide, personRow } from './panels.js';
 import { openSettings } from './settings.js';
+import { mountChatChrome, renderChatBar } from './chatbar.js';
 import { registerDevice, askPermission } from './notify.js';
 
 /* iOS only defines window.Notification for web apps installed to the home
-   screen — in plain mobile Safari it is absent entirely. Code that feature
-   tests ('Notification' in window) was fine, but reading Notification.permission
-   to render the notifications row in Settings threw a ReferenceError there,
-   which meant tapping the gear or the avatar on an iPhone did nothing at all:
-   the whole panel died before it could open. A stand-in with permission set to
-   'unsupported' keeps every existing check honest — nothing is ever granted,
-   so nothing tries to show a notification — while letting the UI render. */
+   screen — in plain mobile Safari it is absent entirely. Reading
+   Notification.permission to render the notifications row threw a
+   ReferenceError there, which meant tapping the gear or the avatar on an
+   iPhone did nothing at all: the whole panel died before it could open. A
+   stand-in with permission 'unsupported' keeps every check honest while
+   letting the UI render. */
 if (!('Notification' in window)) {
   class NotificationStub {
     static permission = 'unsupported';
@@ -35,11 +36,10 @@ if (!('Notification' in window)) {
 const boot = $('#boot');
 
 /* Boot used to be able to hang forever: the splash is a fixed, full-screen
-   layer, so anything that threw (or simply never resolved) between main()
-   starting and boot.hidden = true left a live app underneath a curtain
-   nobody could tap through — no error, no way out, not even a scroll. Every
-   exit from boot now goes through hideBoot(), a watchdog covers the "never
-   resolves" case, and fatal() always leaves something usable on screen. */
+   layer, so anything that threw (or never resolved) left a live app under a
+   curtain nobody could tap through. Every exit from boot goes through
+   hideBoot(), a watchdog covers the "never resolves" case, and fatal() always
+   leaves something usable on screen. */
 let bootTimer = setTimeout(() => {
   if (!boot.hidden) fatal(new Error('Still waiting on the network after 15 seconds.'));
 }, 15000);
@@ -67,13 +67,8 @@ function fatal(e, note) {
 
 async function main() {
   paintIcons();
-  // Fire-and-forget, and deliberately first: this only touches IndexedDB, not
-  // the Supabase client, so there's no reason to wait for initDb()'s /api/config
-  // round trip to start it. It runs in parallel with every network step below
-  // (env, session, profile, folders, chat list) — by the time the chat list can
-  // even render, this has almost always already finished, so the very first
-  // chat tapped after signing back in is warm too, not just chats switched
-  // between mid-session.
+  // Fire-and-forget, and deliberately first: this only touches IndexedDB, so
+  // there is no reason to wait for initDb()'s /api/config round trip.
   warmAllCached();
   const client = await initDb();
   if (!client) return setupScreen();
@@ -105,21 +100,22 @@ async function start() {
 
     $('#me-avatar').src = S.me.photo_url || avatarFallback(S.me.display_name);
 
-    mountThread(); mountComposer(); mountCalls(); wireChrome();
+    mountThread(); mountComposer(); mountCalls(); wireChrome(); mountChatChrome();
     await loadFolders();
     await loadChats();
     subscribeGlobal();
     startPresence();
     initIdentity();
+    // Order matters: the push subscription needs a live service worker, and
+    // the worker registration is what provides it.
+    await registerServiceWorker();
+    wireServiceWorkerMessages();
+    await askPermission();
     registerDevice();
-    askPermission();
     routeHash();
-    registerServiceWorker();
   } catch (e) {
-    // Anything thrown before $('#app') was revealed (a failed profile load, a
-    // rejected first query) used to leave the splash up with only a toast
-    // behind it. If the app is already on screen a toast is the right call;
-    // if it isn't, the person needs a way out.
+    // A toast is right once the app is on screen; before that the person needs
+    // a way out.
     if ($('#app').hidden) fatal(e);
     else { hideBoot(); oops(e); }
   }
@@ -157,34 +153,36 @@ function wireChrome() {
   });
 
   $('#btn-me').onclick = async () => { try { await openSettings(); } catch (e) { oops(e); } };
-  $('#btn-new-group').onclick = () => modal(h('h3', { class: 'display' }, 'Start something'),
-    h('div', { class: 'stack' },
-      h('button', { class: 'btn', onclick: () => { closeModal(); newGroupFlow('group'); } }, 'New group'),
-      h('button', { class: 'btn', onclick: () => { closeModal(); newGroupFlow('broadcast'); } }, 'New broadcast list'),
-      h('button', {
-        class: 'btn ghost', onclick: async () => {
-          closeModal();
-          const code = await promptBox('Join with invite', { label: 'Invite code or link' });
-          if (!code) return;
-          try {
-            const id = await rpc('join_via_invite', { p_code: inviteCode(code) });
-            await loadChats(); openChat(id);
-          } catch (e) { oops(e); }
-        },
-      }, 'Join with an invite link')));
+
+  $('#btn-new-group').onclick = () => actionSheet('Start something', [
+    { icon: 'group-add', label: 'New group', note: 'Everyone sees everyone', onclick: () => newGroupFlow('group') },
+    { icon: 'people', label: 'New broadcast list', note: 'One message, private replies', onclick: () => newGroupFlow('broadcast') },
+    {
+      icon: 'link', label: 'Join with an invite link',
+      onclick: async () => {
+        const code = await promptBox('Join with invite', { label: 'Invite code or link' });
+        if (!code) return;
+        const id = await rpc('join_via_invite', { p_code: inviteCode(code) });
+        await loadChats(); openChat(id);
+      },
+    },
+  ]);
 
   $('#btn-new-chat').onclick = async () => {
-    const results = h('div', { class: 'stack' });
-    const search = h('input', { placeholder: 'Name or email', oninput: async e => {
-      const q = e.target.value.trim();
-      clear(results);
-      if (q.length < 1) return;
-      const rows = await rpc('search_people', { p_query: q });
-      rows.forEach(p => results.append(h('button', {
-        class: 'btn', onclick: () => { closeModal(); startDm(p.id); },
-      }, p.display_name)));
-      if (!rows.length) results.append(h('p', { class: 'hint' }, 'Nobody by that name or email.'));
-    } });
+    const results = h('div', { class: 'set-group' });
+    const search = h('input', {
+      placeholder: 'Name or email', oninput: async e => {
+        const q = e.target.value.trim();
+        clear(results);
+        if (q.length < 1) return;
+        try {
+          const rows = await rpc('search_people', { p_query: q });
+          rows.forEach(p => results.append(personRow(p)));
+          if (!rows.length) results.append(h('p', { class: 'hint' }, 'Nobody by that name or email.'));
+        } catch (err) { oops(err); }
+      },
+    });
+    results.addEventListener('click', () => closeModal());
     modal(h('h3', { class: 'display' }, 'New chat'), h('label', {}, 'Find someone', search), results);
     search.focus();
   };
@@ -200,14 +198,13 @@ function wireChrome() {
     if (e.key === 'Escape') { e.stopPropagation(); cancelSearch(); }
   });
   $('#btn-search-cancel').onclick = cancelSearch;
-  // Previously this only toggled the CSS class, so the panel looked closed
-  // but S.chat/S.msgs and the realtime subscription stayed pointed at that
-  // chat — closeChat() does the full teardown instead.
+  // Previously this only toggled the CSS class, so the panel looked closed but
+  // S.chat and the realtime subscription stayed pointed at that chat.
   $('#btn-back').onclick = closeChat;
   $('#btn-info').onclick = openChatInfo;
   $('#conv-id').onclick = openChatInfo;
-  $('#btn-digest').onclick = () => openDigest();
-  $('#btn-search-in').onclick = searchInChat;
+  if ($('#btn-digest')) $('#btn-digest').onclick = () => openDigest();
+  if ($('#btn-search-in')) $('#btn-search-in').onclick = searchInChat;
 
   document.addEventListener('keydown', e => {
     if (e.key === 'Escape' && !$('#modal').open) { if (!$('#side').hidden) openSide(null); }
@@ -217,12 +214,10 @@ function wireChrome() {
 }
 
 /* Invite links get handled after a trip through the outside world — pasted
-   into a chat app, previewed, shortened, re-encoded, occasionally truncated.
-   decodeURIComponent() throws URIError ("URI malformed") on a percent escape
-   that lost a character on the way, which is how sharing a link ended in an
-   error toast for whoever had just signed up. A code that survived intact is
-   decoded as before; one that didn't is passed through raw so the server gets
-   the chance to accept or reject it on its own terms. */
+   into a chat app, previewed, shortened, occasionally truncated.
+   decodeURIComponent() throws URIError on a percent escape that lost a
+   character on the way, which is how sharing a link ended in an error toast
+   for whoever had just signed up. */
 const safeDecode = s => { try { return decodeURIComponent(s); } catch { return s; } };
 const inviteCode = raw => safeDecode(String(raw).trim().split('#').pop().split('/').filter(Boolean).pop() || '');
 
@@ -257,9 +252,42 @@ function setupScreen() {
   };
 }
 
-function registerServiceWorker() {
+async function registerServiceWorker() {
+  if (!('serviceWorker' in navigator)) return null;
+  try {
+    const reg = await navigator.serviceWorker.register('/sw.js');
+    return reg;
+  } catch (e) {
+    console.warn('service worker registration failed', e);
+    return null;
+  }
+}
+
+/* Everything the worker cannot do itself, because it has no auth session and
+   no UI: switching chat, marking read, and re-recording a rotated push
+   subscription. */
+function wireServiceWorkerMessages() {
   if (!('serviceWorker' in navigator)) return;
-  navigator.serviceWorker.register('/sw.js').catch(() => {});
+  navigator.serviceWorker.addEventListener('message', async ev => {
+    const msg = ev.data || {};
+    try {
+      if (msg.type === 'open-chat' && msg.chat_id) {
+        await loadChats();
+        openChat(msg.chat_id);
+      }
+      if (msg.type === 'mark-read' && msg.chat_id) {
+        await rpc('mark_read', { p_chat: msg.chat_id });
+        await loadChats();
+      }
+      if (msg.type === 'push-resubscribed' && msg.token) {
+        if (msg.oldToken) await sb.from('devices').delete().eq('user_id', S.me.id).eq('token', msg.oldToken);
+        await sb.from('devices').upsert({
+          user_id: S.me.id, token: msg.token, platform: 'webpush',
+          label: navigator.userAgent.slice(0, 60), last_active: new Date().toISOString(),
+        }, { onConflict: 'user_id,token' });
+      }
+    } catch (e) { console.warn('worker message failed', e); }
+  });
 }
 
 main().catch(e => fatal(e));

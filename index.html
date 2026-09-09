@@ -6,17 +6,22 @@
 <title>Wisp</title>
 <link rel="manifest" href="/manifest.webmanifest" />
 <meta name="theme-color" content="#f6f2ec" />
+<link rel="apple-touch-icon" href="/assets/icon-192.png" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="mobile-web-app-capable" content="yes" />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Instrument+Sans:wght@400;500;600;700&family=Newsreader:opsz,wght@6..72,400;6..72,600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
 <link rel="stylesheet" href="/styles.css" />
 <!-- call-control chrome; after styles.css on purpose, it overrides it -->
 <link rel="stylesheet" href="/call.css" />
+<!-- glass + organization layer; last, same reason -->
+<link rel="stylesheet" href="/polish.css" />
 </head>
 <body>
 <div id="boot" class="boot"><div class="boot-mark">wisp</div></div>
 
-<!-- ── setup (only when env vars are missing) ───────────────────────── -->
+<!-- ── setup (only when env vars are missing) ─────────────────────────── -->
 <section id="setup" class="pane-center" hidden>
   <div class="sheet">
     <h1 class="display">Connect a Supabase project</h1>
@@ -27,7 +32,7 @@
   </div>
 </section>
 
-<!-- ── auth ────────────────────────────────────────────────── -->
+<!-- ── auth ─────────────────────────────────────────────────── -->
 <section id="auth" class="pane-center" hidden>
   <div class="auth-card">
     <img class="auth-logo" src="/assets/wisp-logo.png" alt="Wisp" />
@@ -73,7 +78,7 @@
   </div>
 </section>
 
-<!-- ── app ─────────────────────────────────────────────────── -->
+<!-- ── app ────────────────────────────────────────────────── -->
 <main id="app" class="app" hidden>
   <nav class="rail">
     <div class="rail-nav" id="rail-nav">
@@ -83,7 +88,7 @@
       <button class="rail-btn" data-nav="calls" title="Calls"><span class="ico">call</span></button>
       <button class="rail-btn" data-nav="saved" title="Starred, pinned, bookmarks"><span class="ico">star</span></button>
       <button class="rail-btn" data-nav="scheduled" title="Scheduled"><span class="ico">clock</span></button>
-      <button class="rail-btn" data-nav="settings" title="Settings"><span class="ico">gear</span></button>
+      <button class="rail-btn" data-nav="settings" title="Settings"><span class="ico">sliders</span></button>
     </div>
     <div class="rail-tools">
       <button class="rail-btn avatar-btn" id="btn-me" title="Profile"><img id="me-avatar" alt="" /></button>
@@ -91,18 +96,21 @@
   </nav>
 
   <section class="list" id="list-pane">
-    <header class="list-head">
-      <h2 id="list-title">Chats</h2>
-      <div class="list-actions">
-        <button class="icon-btn" id="btn-new-chat" title="New chat"><span class="ico">plus</span></button>
-        <button class="icon-btn" id="btn-new-group" title="New group"><span class="ico">group-add</span></button>
+    <!-- title, search and tabs are one sticky glass band, not three rows -->
+    <div class="list-top" id="list-top">
+      <header class="list-head">
+        <h2 id="list-title">Chats</h2>
+        <div class="list-actions">
+          <button class="icon-btn" id="btn-new-chat" title="New chat"><span class="ico">plus</span></button>
+          <button class="icon-btn" id="btn-new-group" title="New group"><span class="ico">group-add</span></button>
+        </div>
+      </header>
+      <div class="search-wrap">
+        <input id="q" placeholder="Search messages, people, files" autocomplete="off" />
+        <button class="search-cancel" id="btn-search-cancel" type="button" aria-label="Cancel search">Cancel</button>
       </div>
-    </header>
-    <div class="search-wrap">
-      <input id="q" placeholder="Search messages, people, files" autocomplete="off" />
-      <button class="search-cancel" id="btn-search-cancel" type="button" aria-label="Cancel search">Cancel</button>
+      <div class="folders" id="folders"></div>
     </div>
-    <div class="folders" id="folders"></div>
     <div class="list-body" id="list-body"></div>
   </section>
 
@@ -113,28 +121,35 @@
     </div>
 
     <div class="conv-inner" id="conv-inner" hidden>
-      <header class="conv-head">
-        <button class="icon-btn only-narrow" id="btn-back"><span class="ico">back</span></button>
-        <button class="conv-id" id="conv-id">
-          <img id="conv-avatar" alt="" />
-          <span><b id="conv-name"></b><small id="conv-sub"></small></span>
-        </button>
-        <div class="conv-tools">
-          <button class="icon-btn" id="btn-search-in" title="Search in chat"><span class="ico">search</span></button>
-          <button class="icon-btn" id="btn-digest" title="Catch me up"><span class="ico">spark</span></button>
-          <button class="icon-btn" id="btn-call-audio" title="Voice call"><span class="ico">call</span></button>
-          <button class="icon-btn" id="btn-call-video" title="Video call"><span class="ico">video</span></button>
-          <button class="icon-btn" id="btn-info" title="Details"><span class="ico">info</span></button>
-        </div>
-      </header>
+      <!-- floating chrome: the thread scrolls underneath it, which is what
+           makes the blur read as glass rather than as a flat tint -->
+      <div class="conv-top" id="conv-top">
+        <header class="conv-head">
+          <button class="icon-btn only-narrow" id="btn-back" title="Back"><span class="ico">back</span></button>
+          <button class="conv-id" id="conv-id">
+            <img id="conv-avatar" alt="" />
+            <span><b id="conv-name"></b><small id="conv-sub"></small></span>
+          </button>
+          <div class="conv-tools">
+            <button class="icon-btn" id="btn-search-in" title="Search in chat"><span class="ico">search</span></button>
+            <button class="icon-btn" id="btn-digest" title="Catch me up"><span class="ico">spark</span></button>
+            <button class="icon-btn" id="btn-call-audio" title="Voice call"><span class="ico">call</span></button>
+            <button class="icon-btn" id="btn-call-video" title="Video call"><span class="ico">video</span></button>
+            <button class="icon-btn" id="btn-info" title="Details"><span class="ico">info</span></button>
+          </div>
+        </header>
 
-      <div class="pin-strip" id="pin-strip" hidden></div>
-      <div class="select-bar" id="select-bar" hidden>
-        <span id="select-count">0 selected</span>
-        <button class="btn small" id="sel-forward">Forward</button>
-        <button class="btn small" id="sel-star">Star</button>
-        <button class="btn small danger" id="sel-delete">Delete</button>
-        <button class="btn small ghost" id="sel-cancel">Cancel</button>
+        <!-- mute / archive / pin / display / media / mark read / more -->
+        <div class="chatbar" id="chatbar" hidden></div>
+
+        <div class="pin-strip" id="pin-strip" hidden></div>
+        <div class="select-bar" id="select-bar" hidden>
+          <span id="select-count">0 selected</span>
+          <button class="btn small" id="sel-forward">Forward</button>
+          <button class="btn small" id="sel-star">Star</button>
+          <button class="btn small danger" id="sel-delete">Delete</button>
+          <button class="btn small ghost" id="sel-cancel">Cancel</button>
+        </div>
       </div>
 
       <div class="thread" id="thread"></div>
@@ -168,7 +183,7 @@
   <aside class="side" id="side" hidden></aside>
 </main>
 
-<!-- ── call overlay ─────────────────────────────────────────── -->
+<!-- ── call overlay ──────────────────────────────────────────── -->
 <div id="call" class="call" hidden>
   <div class="call-stage">
     <div class="call-audio-bg" id="call-audio-bg"></div>
