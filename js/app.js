@@ -1,5 +1,5 @@
 import { initDb, sb, rpc } from './db.js';
-import { saveEnvLocally } from './env.js';
+import { saveEnvLocally, forgetEnvLocally, normalizeUrl, normalizeKey, envError } from './env.js';
 import { S } from './state.js';
 import { $, $$, h, clear, toast, oops, paintIcons, initials, modal, closeModal, promptBox, setActiveNav } from './util.js';
 import { mountAuthUI, loadMe, twoStepGate, initIdentity, startPresence, signOut } from './auth.js';
@@ -15,7 +15,55 @@ import { openChatInfo, openDigest, searchInChat, runSearch, viewPeople, viewCall
 import { openSettings } from './settings.js';
 import { registerDevice, askPermission } from './notify.js';
 
+/* iOS only defines window.Notification for web apps installed to the home
+   screen — in plain mobile Safari it is absent entirely. Code that feature
+   tests ('Notification' in window) was fine, but reading Notification.permission
+   to render the notifications row in Settings threw a ReferenceError there,
+   which meant tapping the gear or the avatar on an iPhone did nothing at all:
+   the whole panel died before it could open. A stand-in with permission set to
+   'unsupported' keeps every existing check honest — nothing is ever granted,
+   so nothing tries to show a notification — while letting the UI render. */
+if (!('Notification' in window)) {
+  class NotificationStub {
+    static permission = 'unsupported';
+    static requestPermission() { return Promise.resolve('denied'); }
+    close() {}
+  }
+  try { window.Notification = NotificationStub; } catch { /* frozen global, nothing to do */ }
+}
+
 const boot = $('#boot');
+
+/* Boot used to be able to hang forever: the splash is a fixed, full-screen
+   layer, so anything that threw (or simply never resolved) between main()
+   starting and boot.hidden = true left a live app underneath a curtain
+   nobody could tap through — no error, no way out, not even a scroll. Every
+   exit from boot now goes through hideBoot(), a watchdog covers the "never
+   resolves" case, and fatal() always leaves something usable on screen. */
+let bootTimer = setTimeout(() => {
+  if (!boot.hidden) fatal(new Error('Still waiting on the network after 15 seconds.'));
+}, 15000);
+function hideBoot() { clearTimeout(bootTimer); boot.hidden = true; }
+
+function fatal(e, note) {
+  console.error('Wisp could not start', e);
+  hideBoot();
+  $('#fatal')?.remove();
+  document.body.append(h('section', { id: 'fatal', class: 'pane-center' },
+    h('div', { class: 'sheet' },
+      h('h1', { class: 'display' }, 'Wisp could not start'),
+      h('p', { class: 'muted' }, note || e?.message || 'Something went wrong on the way in.'),
+      h('p', { class: 'hint' }, 'Reconnecting keeps your account and messages — it only clears the connection details stored in this browser.'),
+      h('div', { class: 'modal-actions', style: { justifyContent: 'flex-start' } },
+        h('button', { class: 'btn primary', onclick: () => location.reload() }, 'Try again'),
+        h('button', {
+          class: 'btn', onclick: () => {
+            forgetEnvLocally();
+            try { sessionStorage.clear(); } catch {}
+            location.replace('/');
+          },
+        }, 'Reset saved connection')))));
+}
 
 async function main() {
   paintIcons();
@@ -43,7 +91,7 @@ async function main() {
 
   const { data: { session } } = await sb.auth.getSession();
   mountAuthUI();
-  if (!session) { boot.hidden = true; $('#auth').hidden = false; return; }
+  if (!session) { hideBoot(); $('#auth').hidden = false; return; }
   start();
 }
 
@@ -52,7 +100,7 @@ async function start() {
     $('#auth').hidden = true;
     await loadMe();
     if (!await twoStepGate()) return;
-    boot.hidden = true;
+    hideBoot();
     $('#app').hidden = false;
 
     $('#me-avatar').src = S.me.photo_url || avatarFallback(S.me.display_name);
@@ -67,7 +115,14 @@ async function start() {
     askPermission();
     routeHash();
     registerServiceWorker();
-  } catch (e) { oops(e); }
+  } catch (e) {
+    // Anything thrown before $('#app') was revealed (a failed profile load, a
+    // rejected first query) used to leave the splash up with only a toast
+    // behind it. If the app is already on screen a toast is the right call;
+    // if it isn't, the person needs a way out.
+    if ($('#app').hidden) fatal(e);
+    else { hideBoot(); oops(e); }
+  }
 }
 
 const avatarFallback = name => 'data:image/svg+xml;utf8,' + encodeURIComponent(
@@ -85,19 +140,23 @@ function wireChrome() {
   $$('.rail-btn[data-nav]').forEach(btn => btn.onclick = async () => {
     const nav = btn.dataset.nav;
     setActiveNav(nav);
-    if (nav === 'settings') return openSettings();
-    S.view = nav;
-    $('#q').value = '';
-    $('#btn-search-cancel').classList.remove('is-shown');
-    openSide(null);
-    if (nav === 'chats') { $('#list-title').textContent = 'Chats'; await loadFolders(); renderChatList(); }
-    if (nav === 'people') viewPeople();
-    if (nav === 'calls') viewCalls();
-    if (nav === 'saved') viewSaved();
-    if (nav === 'scheduled') viewScheduled();
+    // Every one of these can touch the network, and an unhandled rejection in
+    // a tab handler is a tab that silently does nothing when tapped.
+    try {
+      if (nav === 'settings') return await openSettings();
+      S.view = nav;
+      $('#q').value = '';
+      $('#btn-search-cancel').classList.remove('is-shown');
+      openSide(null);
+      if (nav === 'chats') { $('#list-title').textContent = 'Chats'; await loadFolders(); renderChatList(); }
+      if (nav === 'people') await viewPeople();
+      if (nav === 'calls') await viewCalls();
+      if (nav === 'saved') await viewSaved();
+      if (nav === 'scheduled') await viewScheduled();
+    } catch (e) { oops(e); }
   });
 
-  $('#btn-me').onclick = openSettings;
+  $('#btn-me').onclick = async () => { try { await openSettings(); } catch (e) { oops(e); } };
   $('#btn-new-group').onclick = () => modal(h('h3', { class: 'display' }, 'Start something'),
     h('div', { class: 'stack' },
       h('button', { class: 'btn', onclick: () => { closeModal(); newGroupFlow('group'); } }, 'New group'),
@@ -108,7 +167,7 @@ function wireChrome() {
           const code = await promptBox('Join with invite', { label: 'Invite code or link' });
           if (!code) return;
           try {
-            const id = await rpc('join_via_invite', { p_code: code.split('/').pop() });
+            const id = await rpc('join_via_invite', { p_code: inviteCode(code) });
             await loadChats(); openChat(id);
           } catch (e) { oops(e); }
         },
@@ -157,11 +216,21 @@ function wireChrome() {
   addEventListener('hashchange', routeHash);
 }
 
+/* Invite links get handled after a trip through the outside world — pasted
+   into a chat app, previewed, shortened, re-encoded, occasionally truncated.
+   decodeURIComponent() throws URIError ("URI malformed") on a percent escape
+   that lost a character on the way, which is how sharing a link ended in an
+   error toast for whoever had just signed up. A code that survived intact is
+   decoded as before; one that didn't is passed through raw so the server gets
+   the chance to accept or reject it on its own terms. */
+const safeDecode = s => { try { return decodeURIComponent(s); } catch { return s; } };
+const inviteCode = raw => safeDecode(String(raw).trim().split('#').pop().split('/').filter(Boolean).pop() || '');
+
 async function routeHash() {
   const hash = location.hash.slice(1);
   if (hash.startsWith('join/')) {
     try {
-      const id = await rpc('join_via_invite', { p_code: decodeURIComponent(hash.slice(5)) });
+      const id = await rpc('join_via_invite', { p_code: safeDecode(hash.slice(5)) });
       history.replaceState(null, '', '/');
       await loadChats(); openChat(id);
     } catch (e) { oops(e); }
@@ -170,12 +239,20 @@ async function routeHash() {
 }
 
 function setupScreen() {
-  boot.hidden = true;
-  $('#setup').hidden = false;
+  hideBoot();
+  const sec = $('#setup');
+  sec.hidden = false;
+  const why = envError();
+  if (why) {
+    const note = sec.querySelector('.muted');
+    if (note) note.textContent = `${why} Paste the project URL and anon key again, or set them in Vercel.`;
+  }
   $('#setup-save').onclick = () => {
-    const url = $('#setup-url').value, key = $('#setup-key').value;
-    if (!url || !key) return toast('Both fields, please.', true);
-    saveEnvLocally(url, key);
+    const url = normalizeUrl($('#setup-url').value);
+    const key = normalizeKey($('#setup-key').value);
+    if (!url) return toast('That project URL is not usable — it should read like https://abcd1234.supabase.co', true);
+    if (!key) return toast('The anon key is missing.', true);
+    try { saveEnvLocally(url, key); } catch (e) { return oops(e); }
     location.reload();
   };
 }
@@ -185,4 +262,4 @@ function registerServiceWorker() {
   navigator.serviceWorker.register('/sw.js').catch(() => {});
 }
 
-main();
+main().catch(e => fatal(e));
