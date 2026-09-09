@@ -1,21 +1,36 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.4';
-import { loadEnv } from './env.js';
+import { loadEnv, noteEnvError, forgetEnvLocally } from './env.js';
 
 export let sb = null;
 
 export async function initDb() {
   const env = await loadEnv();
   if (!env) return null;
-  sb = createClient(env.url, env.anonKey, {
-    // sessionStorage (not localStorage) on purpose: localStorage is shared by
-    // every tab of the same origin, so two tabs signed into two accounts would
-    // fight over one session and Supabase's own cross-tab sync would flip one
-    // tab to the other account. sessionStorage is private per tab, so each tab
-    // keeps its own account — closing a tab ends that tab's session, same as
-    // opening a fresh browser profile per account would.
-    auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true, storage: window.sessionStorage },
-    realtime: { params: { eventsPerSecond: 20 } },
-  });
+  try {
+    sb = createClient(env.url, env.anonKey, {
+      // sessionStorage (not localStorage) on purpose: localStorage is shared by
+      // every tab of the same origin, so two tabs signed into two accounts would
+      // fight over one session and Supabase's own cross-tab sync would flip one
+      // tab to the other account. sessionStorage is private per tab, so each tab
+      // keeps its own account — closing a tab ends that tab's session, same as
+      // opening a fresh browser profile per account would.
+      auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true, storage: window.sessionStorage },
+      realtime: { params: { eventsPerSecond: 20 } },
+    });
+  } catch (e) {
+    // supabase-js validates the project URL itself and throws synchronously
+    // ("Invalid supabaseUrl: Provided URL is malformed"). env.js already
+    // repairs and rejects the obvious cases, so reaching here means the value
+    // is genuinely unusable: report it as "no client", which sends the caller
+    // to the setup screen with a reason, and drop any stored copy so the next
+    // reload isn't the same dead end. Anything is better than an unhandled
+    // rejection during boot, which is what used to freeze the splash.
+    console.error('Supabase client could not be created', e);
+    noteEnvError(e?.message || 'Supabase rejected the project URL.');
+    forgetEnvLocally();
+    sb = null;
+    return null;
+  }
   return sb;
 }
 
