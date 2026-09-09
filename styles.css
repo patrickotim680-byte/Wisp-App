@@ -160,6 +160,13 @@ input:focus, textarea:focus, select:focus { border-color: var(--accent); }
 .link-btn:hover { color: var(--ink); text-decoration: underline }
 @media (max-width: 480px) { .auth-panel { padding: 18px } }
 
+.brand-footer { margin-top: 34px; display: grid; justify-items: center; gap: 8px; }
+.brand-tagline { color: var(--ink-3); font-size: 0.8em; letter-spacing: 0.01em; }
+.brand-logo { width: 132px; height: auto; display: block; }
+.brand-logo-dark { display: none; }
+[data-theme="dark"] .brand-logo-light { display: none; }
+[data-theme="dark"] .brand-logo-dark { display: block; }
+
 /* ── app frame ─────────────────────────────────────────────────────────── */
 .app {
   display: grid; height: 100dvh;
