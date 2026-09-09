@@ -1,7 +1,8 @@
 import { sb, rpc, sel, ins, upd, del } from './db.js';
 import { S, person, nameOf } from './state.js';
 import { $, $$, h, clear, esc, linkify, firstUrl, clock, dayLabel, dur, bytes, initials,
-         toast, oops, modal, closeModal, confirmBox, promptBox, iconEl, debounce } from './util.js';
+         toast, oops, modal, closeModal, confirmBox, promptBox, iconEl, icon, actionSheet,
+         copyText, kindIcon, KIND_WORD, debounce } from './util.js';
 import { attUrl, thumbUrl } from './media.js';
 import { openBody } from './crypto.js';
 import { getCachedThread, setCachedThread } from './cache.js';
@@ -11,8 +12,7 @@ let atBottom = true;
 
 // Applies a cached {msgs, status, reacts} payload onto live state without
 // rendering — shared by openChat() (synchronous, from the in-memory layer)
-// and loadMessages() below (from disk/network), so both go through the
-// same merge logic. Returns whether there was anything to apply.
+// and loadMessages() below (from disk/network).
 export function applyCachedThread(payload) {
   if (!payload) return false;
   S.msgs = payload.msgs;
@@ -25,9 +25,6 @@ export function applyCachedThread(payload) {
 export async function loadMessages() {
   const chatId = S.chat.chat_id;
 
-  // openChat() already paints the in-memory cache synchronously before this
-  // even runs (see chats.js) — this call mainly covers the case where this
-  // chat hasn't been touched yet this session and only disk has it.
   const cached = await getCachedThread(chatId);
   if (cached && S.chat?.chat_id === chatId && applyCachedThread(cached)) {
     renderThread(true);
@@ -36,17 +33,13 @@ export async function loadMessages() {
 
   const { data, error } = await sb.from('messages')
     .select('*').eq('chat_id', chatId).order('created_at', { ascending: false }).limit(PAGE);
-  // The user may have switched to a different chat while this was in flight.
-  // Applying a late response for a chat that's no longer open is exactly how
-  // one conversation's messages end up showing under another one's name.
+  // The user may have switched chats while this was in flight. Applying a late
+  // response for a chat that is no longer open is exactly how one
+  // conversation's messages end up under another one's name.
   if (S.chat?.chat_id !== chatId) return;
   if (error) {
-    // We already showed the cached copy, so a flaky connection isn't a dead
-    // end — only surface the error if there was nothing to fall back on.
-    // Note S.msgsReady stays false here if there was no cache either: a
-    // failed fetch hasn't confirmed anything, so it shouldn't get to claim
-    // "No messages yet" — that's a definite statement about a chat we
-    // actually just failed to check.
+    // The cached copy is already on screen, so a flaky connection is not a
+    // dead end — only surface the error if there was nothing to fall back on.
     if (!cached) return oops(error);
     return;
   }
@@ -125,27 +118,26 @@ export function patchReaction({ new: r, old, eventType }) {
   renderThread(false);
 }
 
+/* Delivery state as glyphs rather than ✓ characters, which rendered at a
+   different weight and baseline than everything around them. */
 function ticks(m) {
   const wrap = h('span', { class: 'ticks' });
   if (m.sender_id !== S.me.id) return wrap;
-  if (m.pendingSend) { wrap.textContent = '◌'; return wrap; }
-  if (m.failed) { wrap.textContent = '!'; wrap.style.color = 'var(--danger)'; return wrap; }
+  const put = (glyph, title) => { wrap.append(iconEl(glyph, 14)); wrap.title = title; return wrap; };
+  if (m.pendingSend) return put('clock', 'Sending\u2026');
+  if (m.failed) { wrap.style.color = 'var(--danger)'; return put('alert', 'Not sent — tap and hold to retry'); }
   const rows = S.status.get(m.id) || [];
   const others = rows.length;
-  if (!others) { wrap.textContent = '✓'; return wrap; }
+  if (!others) return put('check', 'Sent');
   const read = rows.filter(r => r.read_at).length;
   const delivered = rows.filter(r => r.delivered_at).length;
-  if (read === others) { wrap.textContent = '✓✓'; wrap.classList.add('read'); }
-  else if (delivered === others) wrap.textContent = '✓✓';
-  else wrap.textContent = '✓';
-  wrap.title = `delivered ${delivered}/${others} · read ${read}/${others}`;
-  return wrap;
+  if (read === others) { wrap.classList.add('read'); return put('check-double', `Read by ${read}/${others}`); }
+  if (delivered === others) return put('check-double', `Delivered ${delivered}/${others}`);
+  return put('check', `Delivered ${delivered}/${others} · read ${read}/${others}`);
 }
 
 // Debounced so a burst of updates (hydrate, reactions, ticks) writes to disk
-// once, not once per change. Runs off of renderThread so every path that
-// mutates the thread — send, receive, edit, react, delete — keeps the local
-// cache current with zero extra call sites to remember.
+// once, not once per change.
 const saveCache = debounce(() => {
   const c = S.chat;
   if (!c) return;
@@ -162,11 +154,9 @@ const saveCache = debounce(() => {
 export function renderThread(scroll = true) {
   const thread = $('#thread');
   if (!S.chat) return;
-  // Only write to disk once cache-or-network has actually confirmed S.msgs —
-  // otherwise the very first render of a cold-cache chat (S.msgs still []
-  // from the reset in openChat()) would debounce-save an "empty" snapshot
-  // over whatever real history disk already had, for the brief moment
-  // before the real data lands.
+  // Only write to disk once cache-or-network has confirmed S.msgs, otherwise
+  // the first render of a cold-cache chat would save an "empty" snapshot over
+  // real history.
   if (S.msgsReady) saveCache();
   clear(thread);
   let lastDay = '', lastSender = null;
@@ -178,14 +168,11 @@ export function renderThread(scroll = true) {
     thread.append(bubble(m, lastSender !== m.sender_id));
     lastSender = m.sender_id;
   });
-  // "No messages yet" is only shown once that's actually been confirmed —
-  // by cache or network — for this chat. Before that, S.msgs is just the
-  // blank slate openChat() resets it to; asserting it's empty and then
-  // swapping in real history a moment later is exactly the "reloads every
-  // time" flash this is meant to avoid. Show nothing rather than a wrong
-  // answer.
+  // "No messages yet" only once that has actually been confirmed for this
+  // chat; before then, show nothing rather than a wrong answer.
   if (!visible.length && S.msgsReady) thread.append(h('div', { class: 'empty' },
-    h('p', {}, 'No messages yet'), h('p', { class: 'hint' }, 'Say something.')));
+    h('div', { class: 'empty-ico', html: icon('chat', 24) }),
+    h('b', {}, 'No messages yet'), h('p', { class: 'hint' }, 'Say something.')));
   if (scroll) requestAnimationFrame(() => { thread.scrollTop = thread.scrollHeight; });
   renderPinStrip();
 }
@@ -207,12 +194,13 @@ function bubble(m, showAuthor) {
     bub.append(h('div', {
       class: 'quote', onclick: e => { e.stopPropagation(); jumpTo(m.reply_to); },
     }, h('b', {}, src ? nameOf(src.sender_id) : 'Message'),
-      h('span', {}, src ? (src.body || `[${src.kind}]`).slice(0, 120) : 'Jump to message')));
+      h('span', {}, src ? (src.body || KIND_WORD[src.kind] || src.kind).slice(0, 120) : 'Jump to message')));
   }
   if (m.forwarded_from) bub.append(h('div', { class: 'hint' }, 'Forwarded'));
 
   if (m.deleted_all) bub.append(h('i', { class: 'muted' }, 'This message was deleted'));
-  else if (m.cipher && !m.body) bub.append(h('i', { class: 'muted' }, '🔐 Encrypted. Unlock your key to read it.'));
+  else if (m.cipher && !m.body) bub.append(h('div', { class: 'viewonce muted' },
+    iconEl('shield-lock', 15), 'Encrypted. Unlock your key to read it.'));
   else {
     renderBody(m, bub);
     if (m.body) {
@@ -223,9 +211,9 @@ function bubble(m, showAuthor) {
 
   const foot = h('div', { class: 'msg-foot' },
     m.edited_at && h('span', {}, 'edited'),
-    S.starred.has(m.id) && h('span', {}, '★'),
-    S.bookmarked.has(m.id) && h('span', {}, '🔖'),
-    m.expires_at && h('span', { title: 'disappears' }, '⏳'),
+    S.starred.has(m.id) && h('span', { title: 'Starred' }, iconEl('star', 12)),
+    S.bookmarked.has(m.id) && h('span', { title: 'Saved for later' }, iconEl('bookmark', 12)),
+    m.expires_at && h('span', { title: 'Disappears' }, iconEl('hourglass', 12)),
     h('span', {}, clock(m.created_at)),
     ticks(m));
   bub.append(foot);
@@ -250,8 +238,8 @@ function renderBody(m, bub) {
   const a = m.attachment;
   if (m.view_once && m.sender_id !== S.me.id) {
     const seen = (m.meta?.viewed_by || []).includes(S.me.id);
-    if (seen) return void bub.append(h('div', { class: 'viewonce' }, '👁 Opened'));
-    return void bub.append(h('button', {
+    if (seen) return void bub.append(h('div', { class: 'viewonce' }, iconEl('eye-off', 15), 'Opened'));
+    const btn = h('button', {
       class: 'btn small', onclick: async e => {
         e.stopPropagation();
         await rpc('mark_view_once_seen', { p_message: m.id });
@@ -261,7 +249,9 @@ function renderBody(m, bub) {
           h('p', { class: 'hint' }, 'This closes for good when you dismiss it.'),
           h('div', { class: 'modal-actions' }, h('button', { class: 'btn primary', onclick: closeModal }, 'Done')));
       },
-    }, '👁 View once media'));
+    });
+    btn.append(iconEl('eye', 15), ' View once media');
+    return void bub.append(btn);
   }
 
   switch (m.kind) {
@@ -300,10 +290,13 @@ function renderBody(m, bub) {
     }
     case 'location': {
       const { lat, lng, live, expires_at } = m.meta || {};
-      bub.append(h('a', {
+      const link = h('a', {
         href: `https://www.openstreetmap.org/?mlat=${lat}&mlon=${lng}#map=16/${lat}/${lng}`,
-        target: '_blank', rel: 'noopener',
-      }, live ? '📍 Live location' : '📍 Location', ' · ', `${(+lat).toFixed(4)}, ${(+lng).toFixed(4)}`));
+        target: '_blank', rel: 'noopener', class: 'doc-row',
+      }, iconEl('map-pin', 17), h('div', {},
+        h('div', {}, live ? 'Live location' : 'Location'),
+        h('small', { class: 'hint' }, `${(+lat).toFixed(4)}, ${(+lng).toFixed(4)}`)));
+      bub.append(link);
       if (live && expires_at) bub.append(h('div', { class: 'hint' }, new Date(expires_at) > new Date()
         ? `sharing until ${clock(expires_at)}` : 'sharing ended'));
       break;
@@ -321,7 +314,7 @@ function renderBody(m, bub) {
     }
     case 'sticker': bub.append(h('div', { style: { fontSize: '54px', lineHeight: '1' } }, m.body)); break;
     case 'poll': pollView(m, bub); break;
-    case 'call': bub.append(h('div', {}, m.body)); break;
+    case 'call': bub.append(h('div', { class: 'doc-row' }, iconEl('call', 16), h('div', {}, m.body))); break;
     default: bub.append(h('div', { html: linkify(m.body || '') }));
   }
 }
@@ -334,12 +327,11 @@ function lightbox(url, mime) {
       h('button', { class: 'btn ghost', onclick: closeModal }, 'Close')));
 }
 
-/* ── voice notes ───────────────────────────────────────────────────────── */
+/* ── voice notes ─────────────────────────────────────────────── */
 function voicePlayer(m, bub) {
   const a = m.attachment || {};
   const cv = h('canvas', { height: 28 });
   const btn = h('button', { class: 'icon-btn' });
-  btn.innerHTML = '';
   btn.append(iconEl('play', 18));
   const rate = h('button', { class: 'rate' }, '1×');
   const time = h('small', {}, dur(a.duration || 0));
@@ -355,23 +347,24 @@ function voicePlayer(m, bub) {
     for (let i = 0; i < n; i++) {
       const v = peaks.length ? peaks[Math.floor(i / n * peaks.length)] : 0.35;
       const bh = Math.max(2 * devicePixelRatio, v * hh);
-      ctx.fillStyle = i / n <= p ? getComputedStyle(bub).color : getComputedStyle(bub).color;
+      ctx.fillStyle = getComputedStyle(bub).color;
       ctx.globalAlpha = i / n <= p ? 1 : 0.35;
       ctx.fillRect(i * 4 * devicePixelRatio, (hh - bh) / 2, 2.4 * devicePixelRatio, bh);
     }
   };
   requestAnimationFrame(() => draw(0));
   let audio;
+  const setGlyph = name => { clear(btn); btn.append(iconEl(name, 18)); };
   btn.onclick = async e => {
     e.stopPropagation();
     if (!audio) {
       audio = new Audio(await attUrl(a));
       audio.playbackRate = +rate.textContent.replace('×', '');
       audio.ontimeupdate = () => { draw(audio.currentTime / (audio.duration || 1)); time.textContent = dur(audio.currentTime); };
-      audio.onended = () => { btn.innerHTML = ''; btn.append(iconEl('play', 18)); draw(0); time.textContent = dur(a.duration || 0); };
+      audio.onended = () => { setGlyph('play'); draw(0); time.textContent = dur(a.duration || 0); };
     }
-    if (audio.paused) { audio.play(); btn.innerHTML = ''; btn.append(iconEl('pause', 18)); }
-    else { audio.pause(); btn.innerHTML = ''; btn.append(iconEl('play', 18)); }
+    if (audio.paused) { audio.play(); setGlyph('pause'); }
+    else { audio.pause(); setGlyph('play'); }
   };
   rate.onclick = e => {
     e.stopPropagation();
@@ -382,7 +375,7 @@ function voicePlayer(m, bub) {
   if (m.meta?.transcript) bub.append(h('div', { class: 'hint', style: { marginTop: '4px' } }, '“' + m.meta.transcript + '”'));
 }
 
-/* ── polls ─────────────────────────────────────────────────────────────── */
+/* ── polls ─────────────────────────────────────────────────── */
 async function pollView(m, bub) {
   const box = h('div', { class: 'poll' }, h('b', {}, m.meta?.question || 'Poll'));
   bub.append(box);
@@ -405,19 +398,19 @@ async function pollView(m, bub) {
           renderThread(false);
         } catch (err) { oops(err); }
       },
-    }, h('div', { class: 'kv' }, h('span', { style: { color: 'inherit', fontWeight: mine ? '600' : '400' } }, (mine ? '● ' : '○ ') + o.label), h('small', {}, String(n))),
+    }, h('div', { class: 'kv' },
+      h('span', { style: { color: 'inherit', fontWeight: mine ? '600' : '400' } }, (mine ? '● ' : '○ ') + o.label),
+      h('small', {}, String(n))),
       h('div', { class: 'poll-bar' }, h('i', { style: { width: total ? (n / total * 100) + '%' : '0%' } }))));
   });
   box.append(h('small', { class: 'hint' }, `${total} vote${total === 1 ? '' : 's'}`));
 }
 
-/* ── link previews (cached in DB, filled by an Edge Function) ──────────── */
+/* ── link previews (cached in DB, filled by an Edge Function) ────────── */
 const previewSeen = new Set();
-// url can be user-typed text a naive regex flagged as a "link" (bad port,
-// stray punctuation, missing scheme, etc.) — new URL() throws TypeError on
-// any of that, and since linkPreview() is fired without await (see call
-// site below), an uncaught throw here becomes a silent unhandled promise
-// rejection instead of ever showing up as a message the user can act on.
+// url can be user-typed text a naive regex flagged as a "link", and new URL()
+// throws TypeError on any of that. linkPreview() is fired without await, so an
+// uncaught throw would become a silent unhandled rejection.
 const safeHost = url => { try { return new URL(url).hostname; } catch { return url; } };
 async function linkPreview(url, bub) {
   const card = h('div', { class: 'preview-card' }, h('small', {}, safeHost(url)));
@@ -438,7 +431,7 @@ async function linkPreview(url, bub) {
   } catch { /* preview is a nicety, never block the message */ }
 }
 
-/* ── per-message actions ───────────────────────────────────────────────── */
+/* ── per-message actions ──────────────────────────────────────── */
 function tools(m, out) {
   const bar = h('div', { class: 'msg-tools' });
   const add = (name, title, fn) => {
@@ -448,41 +441,53 @@ function tools(m, out) {
   add('smile', 'React', () => reactPicker(m.id));
   add('reply', 'Reply', () => setReply(m));
   add('fwd', 'Forward', () => forwardPicker([m.id]));
-  add('star', S.starred.has(m.id) ? 'Unstar' : 'Star', () => toggleStar(m.id));
-  add('bookmark', 'Read later', () => toggleBookmark(m));
-  add('pin', m.pinned_at ? 'Unpin' : 'Pin', () => togglePin(m));
+  add(S.starred.has(m.id) ? 'star' : 'star', S.starred.has(m.id) ? 'Unstar' : 'Star', () => toggleStar(m.id));
+  add('bookmark', S.bookmarked.has(m.id) ? 'Remove from read later' : 'Read later', () => toggleBookmark(m));
+  add(m.pinned_at ? 'pin-off' : 'pin', m.pinned_at ? 'Unpin' : 'Pin', () => togglePin(m));
   add('dots', 'More', () => moreMenu(m, out));
   return bar;
 }
 
 function moreMenu(m, out) {
-  const item = (label, fn, cls = '') => h('button', { class: 'btn ' + cls, onclick: async () => { closeModal(); try { await fn(); } catch (e) { oops(e); } } }, label);
   const canEdit = out && !m.attachment && Date.now() - new Date(m.created_at) < 15 * 60000;
-  modal(h('h3', { class: 'display' }, 'Message'), h('div', { class: 'stack' },
-    item('Select', () => toggleSelect(m.id)),
-    m.body && item('Copy text', () => navigator.clipboard.writeText(m.body).then(() => toast('Copied'))),
-    canEdit && item('Edit', async () => {
-      const v = await promptBox('Edit message', { label: 'Text', value: m.body || '' });
-      if (v !== null) await rpc('edit_message', { p_message: m.id, p_body: v });
-    }),
-    item('Message info', () => infoBox(m)),
-    m.body && item('Translate', () => translate(m)),
-    item('Delete for me', async () => {
-      await ins('message_hides', { message_id: m.id, user_id: S.me.id });
-      m.hiddenLocal = true; renderThread(false);
-    }, 'danger'),
-    (out || S.members.find(x => x.user_id === S.me.id)?.role !== 'member') &&
-      item('Delete for everyone', async () => { await rpc('delete_for_everyone', { p_message: m.id }); }, 'danger'),
-    !out && item('Report message', async () => {
-      const reason = await promptBox('Report', { label: 'What is wrong with it?' });
-      if (reason) { await ins('reports', { reporter_id: S.me.id, message_id: m.id, user_id: m.sender_id, reason }); toast('Reported.'); }
-    }, 'danger')));
+  const iAmStaff = S.members.find(x => x.user_id === S.me.id)?.role !== 'member';
+  actionSheet('Message', [
+    { icon: 'check', label: 'Select', onclick: () => toggleSelect(m.id) },
+    m.body && { icon: 'copy', label: 'Copy text', onclick: () => copyText(m.body) },
+    canEdit && {
+      icon: 'edit', label: 'Edit', note: 'Within 15 minutes of sending',
+      onclick: async () => {
+        const v = await promptBox('Edit message', { label: 'Text', value: m.body || '' });
+        if (v !== null) await rpc('edit_message', { p_message: m.id, p_body: v });
+      },
+    },
+    { icon: 'info', label: 'Message info', note: 'Delivered and read, per person', onclick: () => infoBox(m) },
+    m.body && { icon: 'translate', label: 'Translate', onclick: () => translate(m) },
+    {
+      icon: 'eye-off', label: 'Delete for me', danger: true,
+      onclick: async () => {
+        await ins('message_hides', { message_id: m.id, user_id: S.me.id });
+        m.hiddenLocal = true; renderThread(false);
+      },
+    },
+    (out || iAmStaff) && {
+      icon: 'trash', label: 'Delete for everyone', danger: true,
+      onclick: async () => { await rpc('delete_for_everyone', { p_message: m.id }); },
+    },
+    !out && {
+      icon: 'flag', label: 'Report message', danger: true,
+      onclick: async () => {
+        const reason = await promptBox('Report', { label: 'What is wrong with it?' });
+        if (reason) { await ins('reports', { reporter_id: S.me.id, message_id: m.id, user_id: m.sender_id, reason }); toast('Reported.'); }
+      },
+    },
+  ]);
 }
 
 function infoBox(m) {
   const rows = S.status.get(m.id) || [];
   modal(h('h3', { class: 'display' }, 'Message info'),
-    h('div', { class: 'stack' },
+    h('div', { class: 'card' },
       h('div', { class: 'kv' }, h('span', {}, 'Sent'), h('b', {}, new Date(m.created_at).toLocaleString())),
       ...rows.map(r => h('div', { class: 'kv' }, h('span', {}, nameOf(r.user_id)),
         h('b', {}, r.read_at ? 'read ' + clock(r.read_at) : r.delivered_at ? 'delivered ' + clock(r.delivered_at) : 'sent'))),
@@ -550,11 +555,11 @@ export function renderPinStrip() {
   clear(strip).append(iconEl('pin', 15),
     h('span', {}, `${pins.length} pinned`),
     h('span', { class: 'muted', style: { overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' } },
-      (pins.at(-1).body || `[${pins.at(-1).kind}]`).slice(0, 80)));
+      (pins.at(-1).body || KIND_WORD[pins.at(-1).kind] || '').slice(0, 80)));
   strip.onclick = () => modal(h('h3', { class: 'display' }, 'Pinned in this chat'),
-    h('div', { class: 'stack' }, pins.map(p => h('button', {
+    h('div', { class: 'sheet-list' }, pins.map(p => h('button', {
       class: 'result', onclick: () => { closeModal(); jumpTo(p.id); },
-    }, h('b', {}, nameOf(p.sender_id)), h('span', {}, (p.body || `[${p.kind}]`).slice(0, 140)),
+    }, h('b', {}, nameOf(p.sender_id)), h('span', {}, (p.body || KIND_WORD[p.kind] || '').slice(0, 140)),
       h('small', {}, new Date(p.created_at).toLocaleString())))),
     h('div', { class: 'modal-actions' }, h('button', { class: 'btn ghost', onclick: closeModal }, 'Close')));
 }
@@ -563,9 +568,10 @@ export function setReply(m) {
   S.replyTo = m;
   const chip = $('#reply-chip');
   chip.hidden = false;
-  clear(chip).append(h('b', {}, nameOf(m.sender_id)),
-    h('span', { class: 'muted' }, (m.body || `[${m.kind}]`).slice(0, 90)),
-    h('button', { class: 'btn small ghost', onclick: () => { S.replyTo = null; chip.hidden = true; } }, '✕'));
+  const close = h('button', { class: 'icon-btn', title: 'Cancel reply', style: { marginLeft: 'auto', width: '28px', height: '28px' }, onclick: () => { S.replyTo = null; chip.hidden = true; } });
+  close.append(iconEl('x', 15));
+  clear(chip).append(iconEl('reply', 15), h('b', {}, nameOf(m.sender_id)),
+    h('span', { class: 'muted' }, (m.body || KIND_WORD[m.kind] || '').slice(0, 90)), close);
   $('#input').focus();
 }
 
@@ -577,7 +583,7 @@ export function jumpTo(id) {
   setTimeout(() => el.classList.remove('sel'), 1200);
 }
 
-/* ── multi-select ──────────────────────────────────────────────────────── */
+/* ── multi-select ───────────────────────────────────────────── */
 export function toggleSelect(id) {
   S.selection.has(id) ? S.selection.delete(id) : S.selection.add(id);
   const bar = $('#select-bar');
@@ -589,10 +595,11 @@ export function clearSelection() { S.selection.clear(); $('#select-bar').hidden 
 
 export function forwardPicker(messageIds) {
   const picked = new Set();
-  const list = h('div', { class: 'stack', style: { maxHeight: '46vh', overflowY: 'auto' } },
-    S.chats.filter(c => !c.archived).map(c => h('label', { class: 'member' },
+  const list = h('div', { class: 'sheet-list' },
+    S.chats.filter(c => !c.archived).map(c => h('label', { class: 'sheet-row' },
       h('input', { type: 'checkbox', onchange: e => e.target.checked ? picked.add(c.chat_id) : picked.delete(c.chat_id) }),
-      h('div', { class: 'av' }, initials(c.name)), c.name || 'Chat')));
+      h('div', { class: 'av', style: { width: '32px', height: '32px', fontSize: '12px' } }, initials(c.name)),
+      h('span', { class: 'sheet-label' }, h('b', {}, c.name || 'Chat')))));
   modal(h('h3', { class: 'display' }, `Forward ${messageIds.length} message${messageIds.length > 1 ? 's' : ''}`),
     h('p', { class: 'hint' }, 'Encrypted messages are skipped: their key is not shared with the target chat.'),
     list,
