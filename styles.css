@@ -461,18 +461,72 @@ input:focus, textarea:focus, select:focus { border-color: var(--accent); }
 .switch[aria-checked="true"]:active::after { transform: translateX(14px) }
 
 /* ── call overlay ──────────────────────────────────────────────────────── */
-.call { position: fixed; inset: 0; z-index: 60; background: oklch(0.16 0.01 var(--hue-n)); color: oklch(0.97 0 0); display: grid; grid-template-rows: 1fr auto }
-.call-stage { position: relative; overflow: hidden }
+/* FaceTime-style layout: full-bleed stage with the control pill floating
+   over it (not a separate row), a small draggable-looking self PIP for
+   video calls, and a centered avatar card for voice-only calls. */
+.call { position: fixed; inset: 0; z-index: 60; background: oklch(0.16 0.01 var(--hue-n)); color: oklch(0.97 0 0) }
+.call-stage { position: absolute; inset: 0; overflow: hidden }
+
 #call-remote { width: 100%; height: 100%; object-fit: cover; background: oklch(0.22 0.01 var(--hue-n)) }
-#call-local { position: absolute; right: 18px; bottom: 18px; width: 168px; border-radius: 14px; object-fit: cover; box-shadow: var(--shadow) }
-.call-meta { position: absolute; top: 20px; left: 22px; display: grid; gap: 2px; text-shadow: 0 1px 8px oklch(0 0 0 / 0.6) }
-.call-meta b { font-size: 1.25rem }
-.quality { font-size: 0.78em; opacity: 0.7 }
-.call-bar { display: flex; gap: 12px; justify-content: center; padding: 22px }
-.round { width: 56px; height: 56px; border-radius: 50%; border: none; cursor: pointer; background: oklch(0.32 0.01 var(--hue-n)); color: oklch(0.97 0 0); display: grid; place-items: center }
+#call-local {
+  position: absolute; top: calc(48px + env(safe-area-inset-top, 0px)); left: 16px;
+  width: 94px; height: 156px; border-radius: 14px; object-fit: cover; z-index: 3;
+  box-shadow: 0 6px 20px oklch(0 0 0 / 0.45); border: 1px solid oklch(1 0 0 / 0.14);
+}
+.call.audio #call-remote, .call.audio #call-local { display: none }
+
+/* name / state overlay: top-left during video, auto-hides once connected
+   (tap the stage to bring it back, like FaceTime's fading chrome);
+   centered avatar card for voice calls, which never auto-hides */
+.call-meta {
+  position: absolute; top: calc(20px + env(safe-area-inset-top, 0px)); left: 22px; right: 22px;
+  display: grid; gap: 3px; text-shadow: 0 1px 8px oklch(0 0 0 / 0.6); z-index: 2;
+  transition: opacity 0.3s var(--ease);
+}
+.call-meta b { font-size: 1.25rem; font-weight: 600 }
+.call-substate { display: flex; align-items: center; gap: 6px; opacity: 0.88; font-size: 0.92em }
+.wave-ico { display: none }
+.quality { font-size: 0.78em; opacity: 0.65 }
+.call-avatar { display: none }
+
+.call.video.connected .call-meta { opacity: 0; pointer-events: none }
+.call.video.connected.show-meta .call-meta { opacity: 1; pointer-events: auto }
+
+.call.audio .call-meta {
+  top: calc(64px + env(safe-area-inset-top, 0px)); left: 0; right: 0;
+  justify-items: center; text-align: center; gap: 6px;
+}
+.call.audio .call-avatar {
+  display: block; width: 84px; height: 84px; border-radius: 50%; object-fit: cover;
+  box-shadow: 0 6px 20px oklch(0 0 0 / 0.4); margin-bottom: 2px;
+}
+.call.audio .wave-ico { display: inline-flex }
+
+/* ambient blurred backdrop behind a voice-only call, echoing FaceTime's
+   soft-focus portrait background instead of a blank void */
+.call-audio-bg {
+  position: absolute; inset: -12%; z-index: 0; background-size: cover; background-position: center;
+  filter: blur(38px) brightness(0.55) saturate(1.15); transform: scale(1.15);
+}
+.call.video .call-audio-bg { display: none }
+
+/* floating control pill, spanning the width like FaceTime's bar rather
+   than a tight cluster of buttons */
+.call-bar {
+  position: absolute; left: 16px; right: 16px; bottom: calc(24px + env(safe-area-inset-bottom, 0px));
+  z-index: 4; display: flex; align-items: center; justify-content: space-evenly;
+  padding: 13px 8px; border-radius: 40px;
+  background: oklch(0.22 0.01 var(--hue-n) / 0.55); backdrop-filter: blur(20px) saturate(1.2);
+  border: 1px solid oklch(1 0 0 / 0.08);
+}
+.round { width: 54px; height: 54px; border-radius: 50%; border: none; cursor: pointer; background: oklch(0.42 0.01 var(--hue-n) / 0.75); color: oklch(0.97 0 0); display: grid; place-items: center; flex: none }
 .round.off { background: oklch(0.9 0.01 var(--hue-n)); color: oklch(0.2 0 0) }
 .round.hang { background: var(--danger) }
 .round.accept { background: var(--good) }
+.round.disabled, .round[disabled] { opacity: 0.35; cursor: not-allowed }
+
+.call.audio .call-bar #call-cam { display: none }
+.call.video .call-bar #call-speaker { display: none }
 
 /* ── misc ──────────────────────────────────────────────────────────────── */
 .toasts { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); display: grid; gap: 8px; z-index: 80 }

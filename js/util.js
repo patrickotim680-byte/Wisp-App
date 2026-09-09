@@ -46,6 +46,9 @@ const P = {
   play: 'M7 4l12 8-12 8z', pause: 'M8 5h3v14H8zM13 5h3v14h-3z', globe: 'M12 21a9 9 0 100-18 9 9 0 000 18zM3 12h18M12 3c3 3.5 3 14.5 0 18M12 3c-3 3.5-3 14.5 0 18',
   eye: 'M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8zM12 15a3 3 0 100-6 3 3 0 000 6z',
   'eye-off': 'M3 3l18 18M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19m-6.72-1.07a3 3 0 11-4.24-4.24M6.61 6.61A18.45 18.45 0 001 12s4 8 11 8a10.94 10.94 0 005.39-1.39',
+  keypad: 'M5 5h3v3H5z M10.5 5h3v3h-3z M16 5h3v3h-3z M5 10.5h3v3H5z M10.5 10.5h3v3h-3z M16 10.5h3v3h-3z M5 16h3v3H5z M10.5 16h3v3h-3z M16 16h3v3h-3z', // unused for now — kept in case a future dial pad needs it
+  speaker: 'M4 9v6h3l5 4V5L7 9z M15 9a3 3 0 010 6 M18 6a7 7 0 010 12',
+  wave: 'M4 10v4 M8 6v12 M12 3v18 M16 6v12 M20 10v4',
 };
 export function icon(name, size = 20) {
   const d = P[name] || P.info;

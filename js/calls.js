@@ -4,7 +4,7 @@
 // and the UI says so instead of pretending.
 import { sb, rpc, ins, upd, sel, channel, drop } from './db.js';
 import { S, person, nameOf } from './state.js';
-import { $, h, clear, toast, oops, dur, iconEl } from './util.js';
+import { $, h, clear, toast, oops, dur, iconEl, initials } from './util.js';
 import { playSound } from './notify.js';
 
 let ice = [{ urls: 'stun:stun.l.google.com:19302' }];
@@ -15,14 +15,29 @@ let call = null;              // { id, chat_id, kind, role, timer, t0 }
 let local = null;
 let screenTrack = null;
 let statsTimer = null;
+let revealTimer = null;       // FaceTime-style "tap to bring controls back" during video calls
 
 const ui = {
-  root: () => $('#call'), remote: () => $('#call-remote'), self: () => $('#call-local'),
+  root: () => $('#call'), stage: () => $('.call-stage'), remote: () => $('#call-remote'), self: () => $('#call-local'),
   who: () => $('#call-who'), state: () => $('#call-state'), timer: () => $('#call-timer'), q: () => $('#call-quality'),
+  avatar: () => $('#call-avatar'), bg: () => $('#call-audio-bg'),
 };
+
+// Small inline fallback so the voice-call avatar/backdrop always has
+// something to show even when the chat has no photo set.
+const avatarFallback = name => 'data:image/svg+xml;utf8,' + encodeURIComponent(
+  `<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96"><rect width="96" height="96" rx="48" fill="#8a8578"/><text x="48" y="58" font-family="sans-serif" font-size="34" fill="#f4f1ea" text-anchor="middle">${initials(name)}</text></svg>`);
+
+function setPeerVisual(name, url) {
+  const src = url || avatarFallback(name);
+  ui.avatar().src = src;
+  ui.bg().style.backgroundImage = `url("${src}")`;
+}
 
 function show(on) {
   ui.root().hidden = !on;
+  ui.root().classList.toggle('video', call?.kind === 'video');
+  ui.root().classList.toggle('audio', call?.kind === 'audio');
   $('#call-accept').style.display = call?.role === 'callee' && !call?.answered ? 'grid' : 'none';
 }
 
@@ -45,7 +60,7 @@ function newPeer(otherId) {
     if (v.srcObject !== e.streams[0]) v.srcObject = e.streams[0];
   };
   pc.onconnectionstatechange = () => {
-    if (pc.connectionState === 'connected') { ui.state().textContent = 'Connected'; startTimer(); }
+    if (pc.connectionState === 'connected') { ui.state().textContent = 'Connected'; startTimer(); ui.root().classList.add('connected'); }
     if (['failed', 'closed'].includes(pc.connectionState)) hangup('failed');
   };
   peers.set(otherId, { pc });
@@ -67,6 +82,7 @@ export async function startCall(kind) {
     await getLocal(kind);
     ui.who().textContent = chat.name || 'Call';
     ui.state().textContent = 'Ringing…';
+    setPeerVisual(chat.name, chat.icon_url);
     show(true);
     listenSignals();
     for (const uid of others) {
@@ -89,6 +105,7 @@ export async function incoming(row) {
   call = { id: row.id, chat_id: row.chat_id, kind: row.kind, role: 'callee', answered: false };
   ui.who().textContent = chat?.name || nameOf(row.caller_id);
   ui.state().textContent = `Incoming ${row.kind} call`;
+  setPeerVisual(chat?.name || nameOf(row.caller_id), chat?.icon_url);
   show(true);
   playSound();
   const ring = setInterval(playSound, 2500);
@@ -198,8 +215,10 @@ export async function hangup(reason = 'ended') {
   call = null;
   drop('call');
   show(false);
+  ui.root().classList.remove('connected', 'show-meta');
   ui.timer().textContent = ''; ui.q().textContent = '';
   ui.remote().srcObject = null; ui.self().srcObject = null;
+  ui.avatar().src = ''; ui.bg().style.backgroundImage = '';
 }
 
 async function toggleShare() {
@@ -239,6 +258,14 @@ export function mountCalls() {
     t.enabled = !t.enabled;
     e.currentTarget.classList.toggle('off', !t.enabled);
   };
+  // FaceTime-style chrome: once a video call is connected, the name/timer
+  // overlay fades out; tapping the video brings it back for a few seconds.
+  ui.stage().addEventListener('click', () => {
+    if (call?.kind !== 'video' || !ui.root().classList.contains('connected')) return;
+    ui.root().classList.add('show-meta');
+    clearTimeout(revealTimer);
+    revealTimer = setTimeout(() => ui.root().classList.remove('show-meta'), 3500);
+  });
   channel('calls-in', ch => ch.on('postgres_changes',
     { event: 'INSERT', schema: 'public', table: 'calls' }, ({ new: row }) => incoming(row)));
   addEventListener('beforeunload', () => { if (call) hangup('ended'); });
