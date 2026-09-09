@@ -10,11 +10,13 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Instrument+Sans:wght@400;500;600;700&family=Newsreader:opsz,wght@6..72,400;6..72,600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
 <link rel="stylesheet" href="/styles.css" />
+<!-- call-control chrome; after styles.css on purpose, it overrides it -->
+<link rel="stylesheet" href="/call.css" />
 </head>
 <body>
 <div id="boot" class="boot"><div class="boot-mark">wisp</div></div>
 
-<!-- ── setup (only when env vars are missing) ───────────────────────────── -->
+<!-- ── setup (only when env vars are missing) ───────────────────────── -->
 <section id="setup" class="pane-center" hidden>
   <div class="sheet">
     <h1 class="display">Connect a Supabase project</h1>
@@ -25,7 +27,7 @@
   </div>
 </section>
 
-<!-- ── auth ─────────────────────────────────────────────────────────────── -->
+<!-- ── auth ────────────────────────────────────────────────── -->
 <section id="auth" class="pane-center" hidden>
   <div class="auth-card">
     <img class="auth-logo" src="/assets/wisp-logo.png" alt="Wisp" />
@@ -71,7 +73,7 @@
   </div>
 </section>
 
-<!-- ── app ──────────────────────────────────────────────────────────────── -->
+<!-- ── app ─────────────────────────────────────────────────── -->
 <main id="app" class="app" hidden>
   <nav class="rail">
     <div class="rail-nav" id="rail-nav">
@@ -166,7 +168,7 @@
   <aside class="side" id="side" hidden></aside>
 </main>
 
-<!-- ── call overlay ─────────────────────────────────────────────────────── -->
+<!-- ── call overlay ─────────────────────────────────────────── -->
 <div id="call" class="call" hidden>
   <div class="call-stage">
     <div class="call-audio-bg" id="call-audio-bg"></div>
@@ -181,13 +183,16 @@
       <span id="call-quality" class="quality"></span>
     </div>
   </div>
+  <!-- filled 26px glyphs, mic and camera swap to their slashed twin when off
+       (js/calls.js); voice calls hide the camera, video calls hide the
+       speaker, so either way this reads as four buttons -->
   <div class="call-bar">
-    <button class="round" id="call-mute" title="Mute"><span class="ico">mic</span></button>
-    <button class="round" id="call-share" title="Share screen"><span class="ico">screen</span></button>
-    <button class="round" id="call-cam" title="Camera"><span class="ico">video</span></button>
-    <button class="round disabled" id="call-speaker" title="Speaker (not available yet)" disabled><span class="ico">speaker</span></button>
-    <button class="round accept" id="call-accept" title="Accept"><span class="ico">call</span></button>
-    <button class="round hang" id="call-hang" title="Hang up"><span class="ico">call</span></button>
+    <button class="round" id="call-mute" title="Mute"><span class="ico" data-size="26">mic-fill</span></button>
+    <button class="round" id="call-share" title="Share screen"><span class="ico" data-size="26">screen-fill</span></button>
+    <button class="round" id="call-cam" title="Camera"><span class="ico" data-size="26">video-fill</span></button>
+    <button class="round" id="call-speaker" title="Speaker"><span class="ico" data-size="26">speaker-fill</span></button>
+    <button class="round accept" id="call-accept" title="Accept"><span class="ico" data-size="26">phone-fill</span></button>
+    <button class="round hang" id="call-hang" title="End call"><span class="ico" data-size="26">phone-down-fill</span></button>
   </div>
 </div>
 
