@@ -25,7 +25,12 @@ export const clear = el => { while (el.firstChild) el.removeChild(el.firstChild)
 export const esc = s => String(s ?? '').replace(/[&<>"']/g, c =>
   ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
-/* ── icons (inline SVG, no icon font, no network) ─────────────────────── */
+/* ── icons (inline SVG, no icon font, no network) ───────────────────── */
+/* P holds single-colour outline glyphs: one string of M-segments, stroked.
+   Cheap and uniform, but it cannot express a filled shape, a rounded rect or
+   a slash that has to punch through the artwork underneath it — which is
+   exactly what the call controls need to look like the platform ones. Those
+   live in F below as ready-made SVG children instead. */
 const P = {
   chat: 'M9 3h12v9H9z M3 7h13v9H8l-4 4V7z', people: 'M8 11a3 3 0 100-6 3 3 0 000 6zm8 0a3 3 0 100-6 3 3 0 000 6zM2 19c0-3 3-5 6-5s6 2 6 5M14.5 14.2c2.6.3 5.5 2 5.5 4.8',
   call: 'M6 3h3l2 5-2.5 1.5a11 11 0 006 6L16 13l5 2v3a2 2 0 01-2 2A16 16 0 014 6a2 2 0 012-3z',
@@ -50,22 +55,69 @@ const P = {
   speaker: 'M4 9v6h3l5 4V5L7 9z M15 9a3 3 0 010 6 M18 6a7 7 0 010 12',
   wave: 'M4 10v4 M8 6v12 M12 3v18 M16 6v12 M20 10v4',
 };
-export function icon(name, size = 20) {
+
+/* Filled artwork for the call controls, matching the platform call UI:
+   a solid mic capsule over a stroked cradle, a display with an upward arrow,
+   a speaker with two waves, a camcorder body plus lens wedge, and a solid
+   handset (the hang-up button rotates it in CSS).
+
+   The two "slashed" variants draw the diagonal twice: once fat in
+   var(--glyph-cut) — the button's own background, set in call.css — so the
+   line carves a visible gap through the glyph, then again thin in
+   currentColor as the slash itself. Same trick the system icons use, and it
+   keeps working when the button inverts to its light "off" state. */
+const MIC_BODY = '<path fill="currentColor" stroke="none" d="M12 2.6a3.3 3.3 0 0 1 3.3 3.3v5.9a3.3 3.3 0 0 1-6.6 0V5.9A3.3 3.3 0 0 1 12 2.6Z"/>'
+  + '<path stroke-width="2" d="M5.5 11.3a6.5 6.5 0 0 0 13 0M12 18v3.2"/>';
+const CAM_BODY = '<path fill="currentColor" stroke="none" d="M4.1 6.4h8.5a2.3 2.3 0 0 1 2.3 2.3v6.6a2.3 2.3 0 0 1-2.3 2.3H4.1a2.3 2.3 0 0 1-2.3-2.3V8.7a2.3 2.3 0 0 1 2.3-2.3Z"/>'
+  + '<path fill="currentColor" stroke="none" d="M16.4 10.9 21 8.05a.75.75 0 0 1 1.15.64v6.62a.75.75 0 0 1-1.15.64L16.4 13.1Z"/>';
+const SLASH = '<path stroke="var(--glyph-cut, #3f3f3f)" stroke-width="3.6" d="M3.9 20.6 20.1 3.6"/>'
+  + '<path stroke-width="2" d="M3.9 20.6 20.1 3.6"/>';
+
+const F = {
+  'mic-fill': MIC_BODY,
+  'mic-off-fill': MIC_BODY + SLASH,
+  'video-fill': CAM_BODY,
+  'video-off-fill': CAM_BODY + SLASH,
+  'screen-fill': '<rect x="2.7" y="4.9" width="18.6" height="13.1" rx="3.2" stroke-width="1.9"/>'
+    + '<path fill="currentColor" stroke="none" d="M12 7.9l3.6 3.8h-2.45v3.9h-2.3v-3.9H8.4L12 7.9Z"/>',
+  'speaker-fill': '<path fill="currentColor" stroke="none" d="M12.05 3.5a.9.9 0 0 1 .95.9v15.2a.9.9 0 0 1-1.5.67L7.1 16.35H4.2A1.2 1.2 0 0 1 3 15.15V8.85a1.2 1.2 0 0 1 1.2-1.2h2.9l4.4-3.92a.9.9 0 0 1 .55-.23Z"/>'
+    + '<path stroke-width="1.9" d="M16.4 9.2a4 4 0 0 1 0 5.6M19.1 6.6a8 8 0 0 1 0 10.8"/>',
+  'phone-fill': '<path fill="currentColor" stroke="none" d="M7.6 2.9c.85-.42 1.88-.1 2.35.72l1.55 2.7c.45.79.22 1.79-.53 2.3l-1.2.83a10.9 10.9 0 0 0 4.05 4.05l.83-1.2c.51-.75 1.51-.98 2.3-.53l2.7 1.55c.82.47 1.14 1.5.72 2.35l-.93 1.87c-.4.8-1.26 1.26-2.14 1.14C10.6 18.5 5.5 13.4 4.6 5.97c-.12-.88.34-1.74 1.14-2.14l1.86-.93Z"/>',
+};
+F['phone-down-fill'] = F['phone-fill'];
+
+export function icon(name, size = 20, cls = '') {
+  const attrs = `viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" stroke="currentColor"
+    stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"${cls ? ` class="${cls}"` : ''}`;
+  if (F[name]) return `<svg ${attrs}>${F[name]}</svg>`;
   const d = P[name] || P.info;
-  return `<svg viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" stroke="currentColor"
-    stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${
-    d.split('M').filter(Boolean).map(seg => `<path d="M${seg.trim()}"/>`).join('')}</svg>`;
+  return `<svg ${attrs}>${d.split('M').filter(Boolean).map(seg => `<path d="M${seg.trim()}"/>`).join('')}</svg>`;
 }
 export function paintIcons(root = document) {
   $$('.ico', root).forEach(el => {
     if (el.dataset.done) return;
     el.dataset.done = '1';
-    el.outerHTML = icon(el.textContent.trim());
+    // 'ico' itself is dropped (it is a 20px placeholder box, wrong for the
+    // real icon), every other class is carried over to the <svg>.
+    const keep = [...el.classList].filter(c => c !== 'ico').join(' ');
+    el.outerHTML = icon(el.textContent.trim(), Number(el.dataset.size) || 20, keep);
   });
 }
 export const iconEl = (name, size) => {
   const s = h('span'); s.innerHTML = icon(name, size); return s.firstChild;
 };
+/* Re-draws the glyph inside a live button (mute / camera toggles) without
+   touching the button, its classes or its handlers. */
+export function swapIcon(host, name, size = 20) {
+  const cur = host.querySelector('svg, .ico');
+  if (!cur) return;
+  const keep = cur.tagName === 'svg'
+    ? (cur.getAttribute('class') || '')
+    : [...cur.classList].filter(c => c !== 'ico').join(' ');
+  const box = h('span');
+  box.innerHTML = icon(name, size, keep);
+  cur.replaceWith(box.firstChild);
+}
 
 /* ── shared nav-tab state (keeps the sliding glass indicator in sync
    with whichever code path switches the active tab) ────────────────── */
@@ -78,7 +130,7 @@ export function setActiveNav(name) {
   });
 }
 
-/* ── time ─────────────────────────────────────────────────────────────── */
+/* ── time ──────────────────────────────────────────────────── */
 const fmtTime = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' });
 const fmtDay  = new Intl.DateTimeFormat(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
 export const clock = d => fmtTime.format(new Date(d));
@@ -112,7 +164,7 @@ export const dur = s => {
 };
 export const bytes = n => n < 1024 ? `${n} B` : n < 1048576 ? `${(n / 1024).toFixed(0)} KB` : `${(n / 1048576).toFixed(1)} MB`;
 
-/* ── feedback ─────────────────────────────────────────────────────────── */
+/* ── feedback ─────────────────────────────────────────────── */
 export function toast(msg, bad = false) {
   const t = h('div', { class: 'toast' + (bad ? ' bad' : ''), text: msg });
   $('#toasts').append(t);
@@ -131,13 +183,49 @@ export function toast(msg, bad = false) {
 // failed send once after a session refresh before this message can even
 // show, so by the time someone sees this it's usually genuinely a
 // permission issue, not just a token that needed refreshing.
+// URIError comes from decodeURIComponent() on a link that lost a percent
+// escape somewhere between being shared and being tapped (chat apps and
+// link shorteners do mangle them); "URI malformed" on its own tells the
+// person nothing about what to do next.
 // Anything we haven't special-cased still falls through to the raw message,
 // so new/unexpected errors are never hidden.
 function friendlyMessage(e) {
   if (e?.code === '42501') return "That didn't go through — you may be blocked, have left this chat, or it needs admin rights. If that's not it, try signing out and back in.";
+  if (e instanceof URIError || /URI malformed|Provided URL is malformed/i.test(e?.message || '')) {
+    return 'That link looks damaged — ask for it again, or paste it in full rather than tapping a preview.';
+  }
   return e?.message || String(e);
 }
 export const oops = e => { console.error(e); toast(friendlyMessage(e), true); };
+
+/* Clipboard, with the fallbacks the async API needs on mobile: it is absent
+   on older WebKit and rejects outright inside some in-app browsers, and a
+   bare navigator.clipboard.writeText() there throws where nobody catches it,
+   so "Copy" silently did nothing. */
+export async function copyText(text) {
+  try {
+    if (navigator.clipboard?.writeText) { await navigator.clipboard.writeText(text); toast('Copied'); return true; }
+  } catch { /* fall through */ }
+  try {
+    const ta = h('textarea', { style: { position: 'fixed', top: '0', opacity: '0' } });
+    ta.value = text;
+    document.body.append(ta);
+    ta.select(); ta.setSelectionRange(0, text.length);
+    const ok = document.execCommand('copy');
+    ta.remove();
+    if (ok) { toast('Copied'); return true; }
+  } catch { /* fall through */ }
+  toast('Could not copy automatically — press and hold the link to copy it.', true);
+  return false;
+}
+export async function shareLink(url, title = 'Wisp') {
+  try {
+    if (navigator.share) { await navigator.share({ title, url }); return true; }
+  } catch (e) {
+    if (e?.name === 'AbortError') return false;   // person closed the share sheet
+  }
+  return copyText(url);
+}
 
 export function modal(...nodes) {
   const dlg = $('#modal'), body = clear($('#modal-body'));
