@@ -522,11 +522,23 @@ input:focus, textarea:focus, select:focus { border-color: var(--accent); }
 .round { width: 54px; height: 54px; border-radius: 50%; border: none; cursor: pointer; background: oklch(0.42 0.01 var(--hue-n) / 0.75); color: oklch(0.97 0 0); display: grid; place-items: center; flex: none }
 .round.off { background: oklch(0.9 0.01 var(--hue-n)); color: oklch(0.2 0 0) }
 .round.hang { background: var(--danger) }
+.round.hang .ico, .round.hang svg { transform: rotate(135deg) }
 .round.accept { background: var(--good) }
 .round.disabled, .round[disabled] { opacity: 0.35; cursor: not-allowed }
 
 .call.audio .call-bar #call-cam { display: none }
 .call.video .call-bar #call-speaker { display: none }
+
+/* smooth glow that spins once around the glass pill while a call winds down */
+.call-bar::before {
+  content: ''; position: absolute; inset: -4px; border-radius: inherit; z-index: -1;
+  background: conic-gradient(from 0deg, transparent 0deg, oklch(0.63 0.19 25 / 0.9) 55deg, transparent 130deg);
+  filter: blur(5px); opacity: 0;
+}
+.call.hanging-up .call-bar::before { opacity: 1; animation: hangup-spin 0.7s linear; }
+.call.hanging-up .call-bar { animation: hangup-fade 0.7s var(--ease) }
+@keyframes hangup-spin { to { transform: rotate(360deg) } }
+@keyframes hangup-fade { 0%, 70% { opacity: 1 } 100% { opacity: 0.55 } }
 
 /* ── misc ──────────────────────────────────────────────────────────────── */
 .toasts { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); display: grid; gap: 8px; z-index: 80 }

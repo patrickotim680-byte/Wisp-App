@@ -214,6 +214,12 @@ export async function hangup(reason = 'ended') {
   } catch {}
   call = null;
   drop('call');
+  // let the "ending call" glow finish its spin around the pill before the
+  // overlay actually disappears — media/tracks are already released above,
+  // this is purely the visual sign-off, not a functional delay
+  ui.root().classList.add('hanging-up');
+  await new Promise(r => setTimeout(r, 650));
+  ui.root().classList.remove('hanging-up');
   show(false);
   ui.root().classList.remove('connected', 'show-meta');
   ui.timer().textContent = ''; ui.q().textContent = '';
