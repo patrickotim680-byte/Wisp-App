@@ -1,7 +1,8 @@
 import { sb, rpc, sel, ins, upd, del } from './db.js';
 import { S, person, nameOf } from './state.js';
 import { $, $$, h, clear, toast, oops, modal, closeModal, confirmBox, promptBox,
-         initials, shortWhen, clock, dur, bytes, iconEl, debounce, lastSeenText } from './util.js';
+         initials, shortWhen, clock, dur, bytes, icon, iconEl, actionSheet, copyText,
+         shareLink, kindIcon, KIND_WORD, debounce, lastSeenText } from './util.js';
 import { applyWallpaper, applyContactAccent, saveSettings, ACCENTS, toCustom } from './theme.js';
 import { thumbUrl, compressImage } from './media.js';
 import { jumpTo } from './thread.js';
@@ -13,201 +14,307 @@ export function openSide(node) {
   side.hidden = false; app.classList.add('has-side');
 }
 
-/* ── chat details ──────────────────────────────────────────────────────── */
+/* One shape for every side panel: sticky glass header, scrolling body. */
+export function sidePanel(title, body, { onBack, actions } = {}) {
+  const head = h('div', { class: 'side-top' });
+  if (onBack) {
+    const b = h('button', { class: 'icon-btn', title: 'Back', onclick: onBack });
+    b.append(iconEl('back', 18));
+    head.append(b);
+  }
+  head.append(h('h3', { class: 'display' }, title));
+  if (actions) head.append(actions);
+  const close = h('button', { class: 'icon-btn', title: 'Close', onclick: () => openSide(null) });
+  close.append(iconEl('x', 18));
+  head.append(close);
+  return h('div', {}, head, h('div', { class: 'side-body' }, body));
+}
+
+const kv = (label, control, note) => h('div', { class: 'kv' },
+  h('div', {}, h('span', { style: { color: 'var(--ink)' } }, label), note && h('div', { class: 'hint' }, note)), control);
+
+function switchBtn(val, fn) {
+  const b = h('button', { class: 'switch', role: 'switch', 'aria-checked': String(!!val) });
+  b.onclick = async () => {
+    const next = b.getAttribute('aria-checked') !== 'true';
+    b.setAttribute('aria-checked', String(next));
+    try { await fn(next); } catch (e) { oops(e); b.setAttribute('aria-checked', String(!next)); }
+  };
+  return b;
+}
+
+/* ── chat details ───────────────────────────────────────────── */
 export async function openChatInfo() {
   const c = S.chat; if (!c) return;
   const meRow = S.members.find(m => m.user_id === S.me.id);
   const iAmAdmin = ['owner', 'admin'].includes(meRow?.role);
   const p = c.type === 'dm' ? person(c.other_id) : null;
-  const wrap = h('div', {});
-  const seg = (label, control, note) => h('div', { class: 'kv' },
-    h('div', {}, h('span', { style: { color: 'var(--ink)' } }, label), note && h('div', { class: 'hint' }, note)), control);
-  const sw = (val, fn) => {
-    const b = h('button', { class: 'switch', role: 'switch', 'aria-checked': String(!!val) });
-    b.onclick = async () => { const n = b.getAttribute('aria-checked') !== 'true'; b.setAttribute('aria-checked', String(n)); try { await fn(n); } catch (e) { oops(e); } };
-    return b;
-  };
+  const body = h('div', {});
 
-  wrap.append(h('div', { class: 'side-head' },
-    h('h3', { class: 'display' }, c.name || 'Details'),
-    h('button', { class: 'btn small ghost', onclick: () => openSide(null) }, 'Close')));
-
-  if (p) wrap.append(h('section', {},
-    h('div', { style: { display: 'grid', justifyItems: 'center', gap: '6px' } },
-      p.photo_url ? h('img', { class: 'av', src: p.photo_url, style: { width: '84px', height: '84px' } })
-        : h('div', { class: 'av', style: { width: '84px', height: '84px', fontSize: '1.3em' } }, initials(p.display_name)),
-      h('b', {}, p.display_name), h('small', { class: 'hint' }, lastSeenText(p) || ''),
-      p.about && h('p', { class: 'muted', style: { textAlign: 'center' } }, p.about)),
-    seg('Nickname', h('button', {
-      class: 'btn small', onclick: async () => {
-        const v = await promptBox('Nickname', { value: p.nickname || '', note: 'Only you see it.' });
-        if (v === null) return;
-        await sb.from('contacts').upsert({ user_id: S.me.id, contact_id: p.id, nickname: v || null });
-        S.people.delete(p.id);
-        const [fresh] = await rpc('people_info', { p_ids: [p.id] });
-        S.people.set(p.id, fresh);
-        toast('Saved'); openChatInfo();
-      },
-    }, p.nickname || 'Set')),
-    seg('Chat accent', h('div', { class: 'swatches' },
-      Object.entries(ACCENTS).map(([k, a]) => h('button', {
-        class: 'swatch', style: { background: `oklch(${a.l} ${a.c} ${a.h})` },
-        onclick: async () => {
-          const val = toCustom(a);
-          await sb.from('contacts').upsert({ user_id: S.me.id, contact_id: p.id, accent: val });
-          const [fresh] = await rpc('people_info', { p_ids: [p.id] });
-          S.people.set(p.id, fresh);
-          applyContactAccent(val);
-        },
-      }))), 'Overrides your accent while this chat is open.'),
-    seg('Favourite', sw(p.favorite, async v => {
-      await sb.from('contacts').upsert({ user_id: S.me.id, contact_id: p.id, favorite: v });
-      const [fresh] = await rpc('people_info', { p_ids: [p.id] }); S.people.set(p.id, fresh);
-    })),
-    seg('Block', h('button', {
-      class: 'btn small danger', onclick: async () => {
-        if (p.blocked) { await del('blocks', { blocker_id: S.me.id, blocked_id: p.id }); toast('Unblocked'); }
-        else if (await confirmBox(`Block ${p.display_name}?`, 'Blocks are enforced in the database: neither side can insert messages into your shared chat.', 'Block')) {
-          await rpc('block_user', { p_user: p.id }); toast('Blocked');
-        }
-        const [fresh] = await rpc('people_info', { p_ids: [p.id] }); S.people.set(p.id, fresh); openChatInfo();
-      },
-    }, p.blocked ? 'Unblock' : 'Block')),
-    seg('Report', h('button', {
-      class: 'btn small ghost', onclick: async () => {
-        const why = await promptBox('Report user', { label: 'Reason' });
-        if (why) { await ins('reports', { reporter_id: S.me.id, user_id: p.id, reason: why }); toast('Reported'); }
-      },
-    }, 'Report'))));
-
-  if (c.type !== 'dm') {
-    const list = h('div', { class: 'stack' }, S.members.map(m => {
-      const pp = person(m.user_id);
-      return h('div', { class: 'member' },
-        h('div', { class: 'av', style: { width: '30px', height: '30px', fontSize: '11px' } }, initials(pp?.display_name || '?')),
-        m.user_id === S.me.id ? 'You' : (pp?.display_name || 'Unknown'),
-        h('span', { class: 'role' }, m.role),
-        iAmAdmin && m.user_id !== S.me.id && h('button', {
-          class: 'btn small ghost', onclick: () => modal(h('h3', { class: 'display' }, pp?.display_name || 'Member'),
-            h('div', { class: 'stack' },
-              h('button', { class: 'btn', onclick: async () => { closeModal(); await rpc('set_member_role', { p_chat: c.chat_id, p_user: m.user_id, p_role: m.role === 'admin' ? 'member' : 'admin' }); S.members = await sel('chat_members', { select: '*', eq: { chat_id: c.chat_id } }); openChatInfo(); } }, m.role === 'admin' ? 'Demote to member' : 'Make admin'),
-              h('button', { class: 'btn', onclick: async () => { closeModal(); (await import('./chats.js')).startDm(m.user_id); } }, 'Message directly'),
-              h('button', { class: 'btn danger', onclick: async () => { closeModal(); await rpc('remove_member', { p_chat: c.chat_id, p_user: m.user_id }); S.members = await sel('chat_members', { select: '*', eq: { chat_id: c.chat_id } }); openChatInfo(); } }, 'Remove from group'))),
-        }, '⋯'));
-    }));
-    const { data: chatRow } = await sb.from('chats').select('*').eq('id', c.chat_id).single();
-    wrap.append(h('section', {},
-      h('div', { class: 'side-head' }, h('h3', {}, `${S.members.length} members`),
-        iAmAdmin && h('button', {
-          class: 'btn small', onclick: async () => {
-            const q = await promptBox('Add member', { label: 'Search name or email' });
-            if (!q) return;
-            const rows = await rpc('search_people', { p_query: q });
-            modal(h('h3', { class: 'display' }, 'Add to group'), h('div', { class: 'stack' },
-              rows.map(r => h('button', {
-                class: 'btn', onclick: async () => {
-                  closeModal();
-                  try {
-                    await ins('chat_members', { chat_id: c.chat_id, user_id: r.id });
-                    await ins('messages', { chat_id: c.chat_id, sender_id: S.me.id, kind: 'system', body: `${r.display_name} was added` });
-                    S.members = await sel('chat_members', { select: '*', eq: { chat_id: c.chat_id } });
-                    openChatInfo();
-                  } catch (e) { oops(e); }
-                },
-              }, r.display_name))));
-          },
-        }, 'Add')),
-      list,
-      chatRow.description && h('p', { class: 'muted' }, chatRow.description),
-      iAmAdmin && h('button', {
-        class: 'btn small', onclick: async () => {
-          const name = await promptBox('Group name', { value: chatRow.name || '' });
-          if (name) { await upd('chats', { name }, { id: c.chat_id }); toast('Renamed'); (await import('./chats.js')).loadChats(); }
-        },
-      }, 'Edit group info'),
-      seg('Invite link', h('button', {
-        class: 'btn small', onclick: () => {
-          const link = `${location.origin}/#join/${encodeURIComponent(chatRow.invite_code)}`;
-          modal(h('h3', { class: 'display' }, 'Invite link'), h('code', {}, link),
-            h('div', { class: 'modal-actions' },
-              h('button', { class: 'btn', onclick: () => navigator.clipboard.writeText(link).then(() => toast('Copied')) }, 'Copy'),
-              iAmAdmin && h('button', { class: 'btn danger', onclick: async () => { await rpc('reset_invite', { p_chat: c.chat_id }); closeModal(); toast('Old link revoked'); } }, 'Reset link'),
-              h('button', { class: 'btn ghost', onclick: closeModal }, 'Close')));
-        },
-      }, 'Show')),
-      iAmAdmin && seg('Who can edit info', h('select', {
-        onchange: e => upd('chats', { perm_edit_info: e.target.value }, { id: c.chat_id }),
-      }, h('option', { value: 'everyone', selected: chatRow.perm_edit_info === 'everyone' }, 'Everyone'),
-        h('option', { value: 'admins', selected: chatRow.perm_edit_info === 'admins' }, 'Admins'))),
-      iAmAdmin && seg('Who can message', h('select', {
-        onchange: e => upd('chats', { perm_send: e.target.value }, { id: c.chat_id }),
-      }, h('option', { value: 'everyone', selected: chatRow.perm_send === 'everyone' }, 'Everyone'),
-        h('option', { value: 'admins', selected: chatRow.perm_send === 'admins' }, 'Admins only'))),
-      iAmAdmin && seg('Who can add members', h('select', {
-        onchange: e => upd('chats', { perm_add_members: e.target.value }, { id: c.chat_id }),
-      }, h('option', { value: 'everyone', selected: chatRow.perm_add_members === 'everyone' }, 'Everyone'),
-        h('option', { value: 'admins', selected: chatRow.perm_add_members === 'admins' }, 'Admins')))));
+  /* identity */
+  if (p) {
+    body.append(h('section', {},
+      h('div', { class: 'profile-hero' },
+        p.photo_url
+          ? h('img', { class: 'av', src: p.photo_url, style: { width: '84px', height: '84px' } })
+          : h('div', { class: 'av', style: { width: '84px', height: '84px', fontSize: '1.3em' } }, initials(p.display_name)),
+        h('b', {}, p.display_name),
+        h('small', { class: 'hint' }, lastSeenText(p) || ''),
+        p.about && h('p', { class: 'muted' }, p.about))));
+  } else {
+    body.append(h('section', {},
+      h('div', { class: 'profile-hero' },
+        c.icon_url ? h('img', { class: 'av', src: c.icon_url, style: { width: '78px', height: '78px' } })
+          : h('div', { class: 'av', style: { width: '78px', height: '78px', fontSize: '1.2em' } }, initials(c.name)),
+        h('b', {}, c.name || 'Chat'),
+        h('small', { class: 'hint' }, `${S.members.length} members · ${c.type}`))));
   }
 
-  wrap.append(h('section', {},
-    h('h3', {}, 'This chat'),
-    seg('Disappearing', h('select', {
-      onchange: async e => { await rpc('set_disappearing', { p_chat: c.chat_id, p_seconds: +e.target.value }); (await import('./chats.js')).loadChats(); },
-    }, [[0, 'Off'], [3600, '1 hour'], [86400, '24 hours'], [604800, '7 days'], [7776000, '90 days']]
-      .map(([v, l]) => h('option', { value: v, selected: c.disappear_seconds === v }, l))),
-      'Enforced by RLS plus a purge job, not just hidden in the UI.'),
-    seg('Encryption', sw(c.e2ee, async v => {
-      if (v && !S.keys && !await (await import('./auth.js')).unlockKeysInteractive()) return;
-      if (v) await (await import('./crypto.js')).chatKey(c.chat_id, S.members.map(m => m.user_id));
-      await rpc('set_chat_e2ee', { p_chat: c.chat_id, p_on: v });
-      (await import('./chats.js')).loadChats();
-      toast(v ? 'New messages will be encrypted.' : 'Encryption off.');
-    }), 'Applies to text from here on. Old messages keep their old state.'),
-    seg('Notifications', h('select', {
-      onchange: e => upd('chat_members', { notify_level: e.target.value }, { chat_id: c.chat_id, user_id: S.me.id }),
-    }, [['all', 'All messages'], ['mentions', 'Mentions only'], ['none', 'Nothing']]
-      .map(([v, l]) => h('option', { value: v, selected: (S.members.find(m => m.user_id === S.me.id)?.notify_level) === v }, l)))),
-    seg('Chat wallpaper', h('button', {
-      class: 'btn small', onclick: () => {
-        const i = h('input', { type: 'file', accept: 'image/*', hidden: true, onchange: async e => {
-          const f = e.target.files[0]; if (!f) return;
-          try {
-            const { blob } = await compressImage(f);
-            const path = `${S.me.id}/${crypto.randomUUID()}.webp`;
-            await (await import('./db.js')).upload('wallpapers', path, blob, 'image/webp');
-            await upd('chat_members', { wallpaper_url: path }, { chat_id: c.chat_id, user_id: S.me.id });
-            S.members = await sel('chat_members', { select: '*', eq: { chat_id: c.chat_id } });
-            applyWallpaper(); toast('Chat wallpaper set');
-          } catch (err) { oops(err); }
-        } });
-        document.body.append(i); i.click(); setTimeout(() => i.remove(), 60000);
-      },
-    }, 'Upload'), 'Falls back to your global wallpaper when unset.'),
-    h('button', { class: 'btn small', onclick: exportChat }, 'Export conversation'),
-    h('button', { class: 'btn small', onclick: openDigest }, 'Catch me up'),
-    h('button', { class: 'btn small', onclick: sharedMedia }, 'Shared media')));
+  /* quick actions — the same glass bar as the conversation and the call */
+  const quick = h('div', { class: 'chatbar', style: { marginBottom: '4px' } });
+  const qbtn = (glyph, label, fn) => {
+    const b = h('button', { class: 'cb-btn', type: 'button', title: label, onclick: fn });
+    b.innerHTML = icon(glyph, 19);
+    b.append(h('span', { class: 'cb-label' }, label));
+    quick.append(b);
+  };
+  if (c.type !== 'broadcast') {
+    qbtn('call', 'Voice', () => $('#btn-call-audio').click());
+    qbtn('video', 'Video', () => $('#btn-call-video').click());
+  }
+  qbtn('search', 'Search', () => searchInChat());
+  qbtn('grid', 'Media', () => sharedMedia());
+  qbtn('spark', 'Catch up', () => openDigest());
+  body.append(h('section', {}, quick));
 
-  openSide(wrap);
+  /* person-specific */
+  if (p) {
+    body.append(h('section', {},
+      h('h3', {}, 'This person'),
+      h('div', { class: 'card' },
+        kv('Nickname', h('button', {
+          class: 'btn small', onclick: async () => {
+            const v = await promptBox('Nickname', { value: p.nickname || '', note: 'Only you see it.' });
+            if (v === null) return;
+            await sb.from('contacts').upsert({ user_id: S.me.id, contact_id: p.id, nickname: v || null });
+            S.people.delete(p.id);
+            const [fresh] = await rpc('people_info', { p_ids: [p.id] });
+            S.people.set(p.id, fresh);
+            toast('Saved'); openChatInfo();
+          },
+        }, p.nickname || 'Set')),
+        kv('Favourite', switchBtn(p.favorite, async v => {
+          await sb.from('contacts').upsert({ user_id: S.me.id, contact_id: p.id, favorite: v });
+          const [fresh] = await rpc('people_info', { p_ids: [p.id] }); S.people.set(p.id, fresh);
+        })),
+        kv('Chat accent', h('div', { class: 'swatches' },
+          Object.entries(ACCENTS).map(([k, a]) => h('button', {
+            class: 'swatch', title: a.label, style: { background: `oklch(${a.l} ${a.c} ${a.h})` },
+            onclick: async () => {
+              const val = toCustom(a);
+              await sb.from('contacts').upsert({ user_id: S.me.id, contact_id: p.id, accent: val });
+              const [fresh] = await rpc('people_info', { p_ids: [p.id] });
+              S.people.set(p.id, fresh);
+              applyContactAccent(val);
+            },
+          }))), 'Overrides your accent while this chat is open.'))));
+  }
+
+  /* group members + permissions */
+  if (c.type !== 'dm') {
+    const memberRow = m => {
+      const pp = person(m.user_id);
+      const more = h('button', { class: 'icon-btn', title: 'Member options' });
+      more.append(iconEl('dots', 16));
+      more.onclick = () => actionSheet(pp?.display_name || 'Member', [
+        {
+          icon: 'shield', label: m.role === 'admin' ? 'Demote to member' : 'Make admin',
+          onclick: async () => {
+            await rpc('set_member_role', { p_chat: c.chat_id, p_user: m.user_id, p_role: m.role === 'admin' ? 'member' : 'admin' });
+            S.members = await sel('chat_members', { select: '*', eq: { chat_id: c.chat_id } });
+            openChatInfo();
+          },
+        },
+        { icon: 'chat', label: 'Message directly', onclick: async () => (await import('./chats.js')).startDm(m.user_id) },
+        {
+          icon: 'log-out', label: 'Remove from group', danger: true,
+          onclick: async () => {
+            if (!await confirmBox(`Remove ${pp?.display_name || 'this member'}?`, 'They lose access to the history from now on.', 'Remove')) return;
+            await rpc('remove_member', { p_chat: c.chat_id, p_user: m.user_id });
+            S.members = await sel('chat_members', { select: '*', eq: { chat_id: c.chat_id } });
+            openChatInfo();
+          },
+        },
+      ]);
+      return h('div', { class: 'member' },
+        h('div', { class: 'av', style: { width: '32px', height: '32px', fontSize: '11px' } }, initials(pp?.display_name || '?')),
+        m.user_id === S.me.id ? 'You' : (pp?.display_name || 'Unknown'),
+        h('span', { class: 'role' }, m.role),
+        iAmAdmin && m.user_id !== S.me.id && more);
+    };
+
+    const { data: chatRow } = await sb.from('chats').select('*').eq('id', c.chat_id).single();
+    const addBtn = h('button', {
+      class: 'btn small', onclick: async () => {
+        const q = await promptBox('Add member', { label: 'Search name or email' });
+        if (!q) return;
+        const rows = await rpc('search_people', { p_query: q });
+        if (!rows.length) return toast('Nobody matched.', true);
+        actionSheet('Add to group', rows.map(r => ({
+          icon: 'user', label: r.display_name,
+          onclick: async () => {
+            await ins('chat_members', { chat_id: c.chat_id, user_id: r.id });
+            await ins('messages', { chat_id: c.chat_id, sender_id: S.me.id, kind: 'system', body: `${r.display_name} was added` });
+            S.members = await sel('chat_members', { select: '*', eq: { chat_id: c.chat_id } });
+            openChatInfo();
+          },
+        })));
+      },
+    }, 'Add');
+
+    body.append(h('section', {},
+      h('div', { class: 'side-head' }, h('h3', {}, `${S.members.length} members`), iAmAdmin && addBtn),
+      h('div', { class: 'card' }, S.members.map(memberRow)),
+      chatRow?.description && h('p', { class: 'muted' }, chatRow.description)));
+
+    const permSelect = (field, current, options) => h('select', {
+      onchange: async e => {
+        try { await upd('chats', { [field]: e.target.value }, { id: c.chat_id }); toast('Saved'); }
+        catch (err) { oops(err); }
+      },
+    }, options.map(([v, l]) => h('option', { value: v, selected: current === v }, l)));
+
+    body.append(h('section', {},
+      h('h3', {}, 'Group'),
+      h('div', { class: 'card' },
+        iAmAdmin && kv('Name', h('button', {
+          class: 'btn small', onclick: async () => {
+            const name = await promptBox('Group name', { value: chatRow?.name || '' });
+            if (name) { await upd('chats', { name }, { id: c.chat_id }); toast('Renamed'); (await import('./chats.js')).loadChats(); openChatInfo(); }
+          },
+        }, 'Edit')),
+        kv('Invite link', h('button', {
+          class: 'btn small', onclick: () => {
+            const link = `${location.origin}/#join/${encodeURIComponent(chatRow.invite_code)}`;
+            modal(h('h3', { class: 'display' }, 'Invite link'),
+              h('code', {}, link),
+              h('div', { class: 'modal-actions' },
+                h('button', { class: 'btn', onclick: () => copyText(link) }, 'Copy'),
+                h('button', { class: 'btn', onclick: () => shareLink(link, 'Join me on Wisp') }, 'Share'),
+                iAmAdmin && h('button', {
+                  class: 'btn danger', onclick: async () => {
+                    try { await rpc('reset_invite', { p_chat: c.chat_id }); closeModal(); toast('Old link revoked'); }
+                    catch (e) { oops(e); }
+                  },
+                }, 'Reset link'),
+                h('button', { class: 'btn ghost', onclick: closeModal }, 'Close')));
+          },
+        }, 'Show')),
+        iAmAdmin && kv('Who can edit info', permSelect('perm_edit_info', chatRow?.perm_edit_info, [['everyone', 'Everyone'], ['admins', 'Admins']])),
+        iAmAdmin && kv('Who can message', permSelect('perm_send', chatRow?.perm_send, [['everyone', 'Everyone'], ['admins', 'Admins only']])),
+        iAmAdmin && kv('Who can add members', permSelect('perm_add_members', chatRow?.perm_add_members, [['everyone', 'Everyone'], ['admins', 'Admins']])))));
+  }
+
+  /* this chat */
+  const notifyLevel = meRow?.notify_level || 'all';
+  body.append(h('section', {},
+    h('h3', {}, 'This chat'),
+    h('div', { class: 'card' },
+      kv('Notifications', h('select', {
+        onchange: async e => {
+          try {
+            await upd('chat_members', { notify_level: e.target.value }, { chat_id: c.chat_id, user_id: S.me.id });
+            // Without this the panel kept showing the previous value on
+            // reopen, and the in-app notifier kept using it too.
+            S.members = await sel('chat_members', { select: '*', eq: { chat_id: c.chat_id } });
+            toast('Saved');
+          } catch (err) { oops(err); }
+        },
+      }, [['all', 'All messages'], ['mentions', 'Mentions only'], ['none', 'Nothing']]
+        .map(([v, l]) => h('option', { value: v, selected: notifyLevel === v }, l)))),
+      kv('Disappearing', h('select', {
+        onchange: async e => {
+          try {
+            await rpc('set_disappearing', { p_chat: c.chat_id, p_seconds: +e.target.value });
+            (await import('./chats.js')).loadChats();
+          } catch (err) { oops(err); }
+        },
+      }, [[0, 'Off'], [3600, '1 hour'], [86400, '24 hours'], [604800, '7 days'], [7776000, '90 days']]
+        .map(([v, l]) => h('option', { value: v, selected: c.disappear_seconds === v }, l))),
+        'Enforced by RLS plus a purge job, not just hidden in the UI.'),
+      kv('Encryption', switchBtn(c.e2ee, async v => {
+        if (v && !S.keys && !await (await import('./auth.js')).unlockKeysInteractive()) return;
+        if (v) await (await import('./crypto.js')).chatKey(c.chat_id, S.members.map(m => m.user_id));
+        await rpc('set_chat_e2ee', { p_chat: c.chat_id, p_on: v });
+        (await import('./chats.js')).loadChats();
+        toast(v ? 'New messages will be encrypted.' : 'Encryption off.');
+      }), 'Applies to text from here on. Old messages keep their old state.'),
+      kv('Wallpaper', h('button', {
+        class: 'btn small', onclick: async () => (await import('./chatbar.js')).openDisplay(),
+      }, 'Change')))));
+
+  /* export + danger */
+  body.append(h('section', {},
+    h('h3', {}, 'Data'),
+    h('div', { class: 'set-group' },
+      sideAction('down', 'Export conversation', 'Text file, or print to PDF', exportChat),
+      sideAction('grid', 'Shared media', 'Every photo, video and file here', sharedMedia))));
+
+  if (p) {
+    body.append(h('section', {},
+      h('h3', {}, 'Safety'),
+      h('div', { class: 'set-group' },
+        sideAction(p.blocked ? 'unlock' : 'ban', p.blocked ? 'Unblock' : `Block ${p.display_name.split(' ')[0]}`,
+          'Enforced in the database: neither side can post to your shared chat', async () => {
+            if (p.blocked) { await del('blocks', { blocker_id: S.me.id, blocked_id: p.id }); toast('Unblocked'); }
+            else if (await confirmBox(`Block ${p.display_name}?`, 'Neither side can insert messages into your shared chat.', 'Block')) {
+              await rpc('block_user', { p_user: p.id }); toast('Blocked');
+            }
+            const [fresh] = await rpc('people_info', { p_ids: [p.id] }); S.people.set(p.id, fresh); openChatInfo();
+          }, true),
+        sideAction('flag', 'Report', 'Sends the reason to the moderators', async () => {
+          const why = await promptBox('Report user', { label: 'Reason' });
+          if (why) { await ins('reports', { reporter_id: S.me.id, user_id: p.id, reason: why }); toast('Reported'); }
+        }, true))));
+  }
+
+  openSide(sidePanel(c.name || 'Details', body));
+}
+
+/* A tappable row with a glyph, a label and a sub-label. */
+export function sideAction(glyph, label, note, fn, danger = false) {
+  return h('button', {
+    class: 'set-row' + (danger ? ' danger' : ''),
+    onclick: async () => { try { await fn(); } catch (e) { oops(e); } },
+  },
+    h('span', { class: 'sheet-ico', html: icon(glyph, 19) }),
+    h('span', { class: 'sheet-label' }, h('b', {}, label), note && h('small', {}, note)),
+    h('span', { class: 'chev', html: icon('chevron-right', 16) }));
 }
 
 export async function sharedMedia() {
   const rows = await rpc('shared_media', { p_chat: S.chat.chat_id });
   const grid = h('div', { class: 'gallery' });
-  const docs = h('div', { class: 'stack' });
-  rows.forEach(async m => {
+  const docs = h('div', { class: 'set-group' });
+  // Sequential on purpose: forEach(async ...) resolved the signed URLs in
+  // whatever order the network felt like, so tiles appeared shuffled.
+  for (const m of rows) {
     if (m.kind === 'image' || m.kind === 'video') {
       const u = await thumbUrl(m.attachment);
-      grid.append(h('img', { src: u, loading: 'lazy', onclick: () => jumpTo(m.id) }));
+      if (u) grid.append(h('img', { src: u, loading: 'lazy', onclick: () => jumpTo(m.id) }));
     } else {
-      docs.append(h('button', { class: 'result', onclick: () => jumpTo(m.id) },
-        h('b', {}, m.attachment?.name || m.kind), h('small', {}, `${bytes(m.attachment?.size || 0)} · ${shortWhen(m.created_at)}`)));
+      docs.append(sideAction(kindIcon(m.kind), m.attachment?.name || KIND_WORD[m.kind] || m.kind,
+        `${bytes(m.attachment?.size || 0)} · ${shortWhen(m.created_at)}`, () => jumpTo(m.id)));
     }
-  });
-  openSide(h('div', {},
-    h('div', { class: 'side-head' }, h('h3', { class: 'display' }, 'Shared media'),
-      h('button', { class: 'btn small ghost', onclick: openChatInfo }, 'Back')),
-    h('section', {}, grid), h('section', {}, docs),
-    !rows.length && h('p', { class: 'hint' }, 'Nothing shared yet.')));
+  }
+  const body = h('div', {},
+    rows.length ? null : h('div', { class: 'empty' },
+      h('div', { class: 'empty-ico', html: icon('grid', 24) }),
+      h('b', {}, 'Nothing shared yet'),
+      h('p', { class: 'hint' }, 'Photos, videos and files sent here show up in this grid.')),
+    grid.children.length ? h('section', {}, grid) : null,
+    docs.children.length ? h('section', {}, h('h3', {}, 'Files'), docs) : null);
+  openSide(sidePanel('Shared media', body, { onBack: openChatInfo }));
 }
 
 export async function exportChat() {
@@ -222,6 +329,7 @@ export async function exportChat() {
         h('button', {
           class: 'btn primary', onclick: () => {
             const w = window.open('', '_blank');
+            if (!w) return toast('The browser blocked the print window.', true);
             w.document.write(`<pre style="font:13px/1.5 ui-monospace,monospace;white-space:pre-wrap;padding:32px">${header}${(text || '').replace(/[<>&]/g, ch => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[ch]))}</pre>`);
             w.document.title = S.chat.name || 'chat'; w.print();
           },
@@ -230,7 +338,7 @@ export async function exportChat() {
   } catch (e) { oops(e); }
 }
 
-/* ── catch me up ───────────────────────────────────────────────────────── */
+/* ── catch me up ───────────────────────────────────────────── */
 export async function openDigest(hours = 12) {
   try {
     const d = await rpc('chat_digest', { p_chat: S.chat.chat_id, p_hours: hours });
@@ -259,7 +367,12 @@ export async function openDigest(hours = 12) {
   } catch (e) { oops(e); }
 }
 
-/* ── list-pane views ───────────────────────────────────────────────────── */
+/* ── list-pane views ────────────────────────────────────────── */
+const sectionLabel = text => h('div', { class: 'day-sep', style: { justifySelf: 'start', margin: '10px 16px' } }, text);
+const emptyState = (glyph, title, note) => h('div', { class: 'empty' },
+  h('div', { class: 'empty-ico', html: icon(glyph, 24) }),
+  h('b', {}, title), h('p', { class: 'hint' }, note));
+
 export async function viewPeople() {
   const body = clear($('#list-body'));
   $('#list-title').textContent = 'People';
@@ -267,24 +380,30 @@ export async function viewPeople() {
   const contacts = await sel('contacts', { eq: { user_id: S.me.id } });
   const ids = contacts.map(c => c.contact_id);
   const people = ids.length ? await rpc('people_info', { p_ids: ids }) : [];
-  const favs = people.filter(p => p.favorite);
   const draw = (title, rows) => {
     if (!rows.length) return;
-    body.append(h('div', { class: 'day-sep', style: { justifySelf: 'start', margin: '10px 16px' } }, title));
+    body.append(sectionLabel(title));
     rows.forEach(p => body.append(personRow(p)));
   };
-  draw('Favourites', favs);
+  draw('Favourites', people.filter(p => p.favorite));
   draw('Contacts', people.filter(p => !p.favorite));
-  if (!people.length) body.append(h('div', { class: 'empty' }, h('p', {}, 'No contacts yet'),
-    h('p', { class: 'hint' }, 'Search above by name or email to find someone.')));
+  if (!people.length) body.append(emptyState('people', 'No contacts yet', 'Search above by name or email to find someone.'));
 }
+
 export function personRow(p) {
+  const flags = h('div', { class: 'dot-row' },
+    p.favorite && h('span', { class: 'row-flag accent', title: 'Favourite' }, iconEl('star', 14)),
+    p.blocked && h('span', { class: 'row-flag', title: 'Blocked' }, iconEl('ban', 14)));
   return h('button', {
     class: 'row', onclick: async () => (await import('./chats.js')).startDm(p.id),
-  }, p.photo_url ? h('img', { class: 'av', src: p.photo_url }) : h('div', { class: 'av' }, initials(p.display_name)),
-    h('div', { class: 'row-main' }, h('div', { class: 'row-top' }, h('span', { class: 'row-name' }, p.display_name)),
+  },
+    h('div', { class: 'avatar-wrap' },
+      p.photo_url ? h('img', { class: 'av', src: p.photo_url }) : h('div', { class: 'av' }, initials(p.display_name)),
+      p.is_online && h('span', { class: 'presence', title: 'online' })),
+    h('div', { class: 'row-main' },
+      h('div', { class: 'row-top' }, h('span', { class: 'row-name' }, p.nickname || p.display_name)),
       h('div', { class: 'row-prev' }, p.about || lastSeenText(p) || '')),
-    h('div', { class: 'row-side' }, p.favorite ? '★' : '', p.blocked ? '⛔' : ''));
+    h('div', { class: 'row-side' }, flags));
 }
 
 export async function viewCalls() {
@@ -292,18 +411,41 @@ export async function viewCalls() {
   $('#list-title').textContent = 'Calls';
   clear($('#folders'));
   const rows = await (await import('./calls.js')).callHistory();
-  if (!rows.length) return void body.append(h('div', { class: 'empty' }, h('p', {}, 'No calls yet')));
+  if (!rows.length) return void body.append(emptyState('call', 'No calls yet', 'Voice and video calls you make or receive land here.'));
+  const label = {
+    missed: 'Missed', declined: 'Declined', accepted: 'In progress',
+    ringing: 'Ringing', failed: 'Failed', ended: null,
+  };
   rows.forEach(r => {
     const out = r.caller_id === S.me.id;
-    const label = { missed: 'Missed', declined: 'Declined', ended: out ? 'Outgoing' : 'Incoming', accepted: 'In progress', ringing: 'Ringing', failed: 'Failed' }[r.state];
+    const glyph = r.state === 'missed' ? 'phone-missed' : out ? 'phone-out' : 'phone-in';
+    const text = label[r.state] ?? (out ? 'Outgoing' : 'Incoming');
+    const known = S.chats.some(c => c.chat_id === r.chat_id);
+    const back = h('button', {
+      class: 'icon-btn', title: r.kind === 'video' ? 'Video call back' : 'Call back',
+      onclick: async e => {
+        e.stopPropagation();
+        if (!known) return toast('That conversation is gone, so there is nobody to call back.', true);
+        const { openChat } = await import('./chats.js');
+        await openChat(r.chat_id);
+        $(r.kind === 'video' ? '#btn-call-video' : '#btn-call-audio').click();
+      },
+    });
+    back.append(iconEl(r.kind === 'video' ? 'video' : 'call', 17));
     body.append(h('button', {
-      class: 'row', onclick: async () => { const chats = S.chats.find(c => c.chat_id === r.chat_id); if (chats) (await import('./chats.js')).openChat(r.chat_id); },
-    }, h('div', { class: 'av' }, r.kind === 'video' ? '🎥' : '📞'),
+      class: 'row',
+      onclick: async () => {
+        if (!known) return toast('That conversation is no longer in your list.', true);
+        (await import('./chats.js')).openChat(r.chat_id);
+      },
+    },
+      h('div', { class: 'av' }, iconEl(glyph, 19)),
       h('div', { class: 'row-main' },
         h('div', { class: 'row-top' }, h('span', { class: 'row-name' }, r.chats?.name || (out ? 'Outgoing call' : 'Incoming call'))),
         h('div', { class: 'row-prev', style: r.state === 'missed' ? { color: 'var(--danger)' } : {} },
-          `${label}${r.duration ? ' · ' + dur(r.duration) : ''}`)),
-      h('div', { class: 'row-side' }, shortWhen(r.started_at))));
+          iconEl(r.kind === 'video' ? 'video' : 'call', 13),
+          `${text}${r.duration ? ' · ' + dur(r.duration) : ''}`)),
+      h('div', { class: 'row-side' }, h('span', {}, shortWhen(r.started_at)), back)));
   });
 }
 
@@ -316,7 +458,7 @@ export async function viewSaved() {
     sb.from('bookmarks').select('message_id, note, created_at, messages(*, chats(name, type))').eq('user_id', S.me.id),
   ]);
   const section = (title, rows, noteKey) => {
-    body.append(h('div', { class: 'day-sep', style: { justifySelf: 'start', margin: '10px 16px' } }, title));
+    body.append(sectionLabel(title));
     if (!rows?.length) return body.append(h('p', { class: 'hint', style: { padding: '0 16px 10px' } }, 'Nothing here yet.'));
     rows.forEach(r => {
       const m = r.messages; if (!m) return;
@@ -327,8 +469,8 @@ export async function viewSaved() {
           setTimeout(() => jumpTo(m.id), 400);
         },
       }, h('b', {}, m.chats?.name || 'Chat'),
-        h('span', {}, (m.body || `[${m.kind}]`).slice(0, 140)),
-        h('small', {}, [nameOf(m.sender_id), shortWhen(m.created_at), r[noteKey]].filter(Boolean).join(' · '))));
+        h('span', {}, (m.body || KIND_WORD[m.kind] || m.kind).slice(0, 140)),
+        h('small', {}, [nameOf(m.sender_id), shortWhen(m.created_at), noteKey && r[noteKey]].filter(Boolean).join(' · '))));
     });
   };
   section('Starred', stars.data, null);
@@ -341,13 +483,12 @@ export async function viewScheduled() {
   clear($('#folders'));
   const rows = await sb.from('scheduled_messages').select('*, chats(name)').eq('sender_id', S.me.id).order('send_at');
   const pend = (rows.data || []).filter(r => r.status === 'pending');
-  if (!pend.length) body.append(h('div', { class: 'empty' }, h('p', {}, 'Nothing queued'),
-    h('p', { class: 'hint' }, 'Use the clock in the composer to schedule a message.')));
+  if (!pend.length) body.append(emptyState('clock', 'Nothing queued', 'Use the clock in the composer to schedule a message.'));
   pend.forEach(r => body.append(h('div', { class: 'result' },
     h('b', {}, r.chats?.name || 'Chat'),
     h('span', {}, (r.body || '').slice(0, 140)),
     h('small', {}, `${new Date(r.send_at).toLocaleString()}${r.recurrence ? ' · repeats ' + r.recurrence : ''}`),
-    h('div', { style: { display: 'flex', gap: '6px', marginTop: '4px' } },
+    h('div', { style: { display: 'flex', gap: '6px', marginTop: '6px' } },
       h('button', {
         class: 'btn small', onclick: async () => {
           const v = await promptBox('Edit scheduled message', { value: r.body || '' });
@@ -365,14 +506,14 @@ export async function viewScheduled() {
       }, 'Cancel')))));
   const seen = (rows.data || []).filter(r => r.status !== 'pending');
   if (seen.length) {
-    body.append(h('div', { class: 'day-sep', style: { justifySelf: 'start', margin: '10px 16px' } }, 'History'));
+    body.append(sectionLabel('History'));
     seen.slice(0, 20).forEach(r => body.append(h('div', { class: 'result' },
       h('b', {}, r.chats?.name || 'Chat'), h('span', {}, (r.body || '').slice(0, 100)),
       h('small', {}, `${r.status} · ${shortWhen(r.send_at)}`))));
   }
 }
 
-/* ── search across everything ──────────────────────────────────────────── */
+/* ── search across everything ───────────────────────────────────── */
 export const runSearch = debounce(async q => {
   const { renderChatList } = await import('./chats.js');
   const body = $('#list-body');
@@ -385,10 +526,10 @@ export const runSearch = debounce(async q => {
       rpc('search_people', { p_query: q }),
     ]);
     if (people.length) {
-      body.append(h('div', { class: 'day-sep', style: { justifySelf: 'start', margin: '10px 16px' } }, 'People'));
+      body.append(sectionLabel('People'));
       people.forEach(p => body.append(personRow(p)));
     }
-    body.append(h('div', { class: 'day-sep', style: { justifySelf: 'start', margin: '10px 16px' } }, `Messages (${msgs.length})`));
+    body.append(sectionLabel(`Messages (${msgs.length})`));
     if (!msgs.length) body.append(h('p', { class: 'hint', style: { padding: '0 16px' } }, 'No message matches. Encrypted chats are not searchable server-side.'));
     msgs.forEach(m => {
       const hl = (m.body || '').replace(new RegExp(`(${q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'ig'), '<mark>$1</mark>');
@@ -407,10 +548,14 @@ export const runSearch = debounce(async q => {
 export async function searchInChat() {
   const q = await promptBox('Search in this chat', { label: 'Text' });
   if (!q) return;
-  const rows = await rpc('search_messages', { p_query: q, p_chat: S.chat.chat_id });
-  modal(h('h3', { class: 'display' }, `${rows.length} hit${rows.length === 1 ? '' : 's'}`),
-    h('div', { class: 'stack', style: { maxHeight: '50vh', overflowY: 'auto' } },
-      rows.map(m => h('button', { class: 'result', onclick: () => { closeModal(); jumpTo(m.message_id); } },
-        h('b', {}, nameOf(m.sender_id)), h('span', {}, (m.body || '').slice(0, 160)), h('small', {}, shortWhen(m.created_at))))),
-    h('div', { class: 'modal-actions' }, h('button', { class: 'btn ghost', onclick: closeModal }, 'Close')));
+  try {
+    const rows = await rpc('search_messages', { p_query: q, p_chat: S.chat.chat_id });
+    modal(h('h3', { class: 'display' }, `${rows.length} hit${rows.length === 1 ? '' : 's'}`),
+      rows.length
+        ? h('div', { class: 'sheet-list' },
+          rows.map(m => h('button', { class: 'result', onclick: () => { closeModal(); jumpTo(m.message_id); } },
+            h('b', {}, nameOf(m.sender_id)), h('span', {}, (m.body || '').slice(0, 160)), h('small', {}, shortWhen(m.created_at)))))
+        : h('p', { class: 'hint' }, 'Nothing in this chat matched. Encrypted messages are not searchable server-side.'),
+      h('div', { class: 'modal-actions' }, h('button', { class: 'btn ghost', onclick: closeModal }, 'Close')));
+  } catch (e) { oops(e); }
 }
