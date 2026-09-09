@@ -4,7 +4,7 @@
 // and the UI says so instead of pretending.
 import { sb, rpc, ins, upd, sel, channel, drop } from './db.js';
 import { S, person, nameOf } from './state.js';
-import { $, h, clear, toast, oops, dur, iconEl, initials } from './util.js';
+import { $, h, clear, toast, oops, dur, iconEl, initials, swapIcon } from './util.js';
 import { playSound } from './notify.js';
 
 let ice = [{ urls: 'stun:stun.l.google.com:19302' }];
@@ -16,6 +16,12 @@ let local = null;
 let screenTrack = null;
 let statsTimer = null;
 let revealTimer = null;       // FaceTime-style "tap to bring controls back" during video calls
+let onSpeaker = true;         // only meaningful where setSinkId exists (see toggleSpeaker)
+
+/* The control-bar glyphs are the filled variants at 26px, and the mic and
+   camera each have a slashed twin for their off state. Size lives here as
+   well as in the markup because swapIcon() redraws the glyph from scratch. */
+const GLYPH = 26;
 
 const ui = {
   root: () => $('#call'), stage: () => $('.call-stage'), remote: () => $('#call-remote'), self: () => $('#call-local'),
@@ -32,6 +38,20 @@ function setPeerVisual(name, url) {
   const src = url || avatarFallback(name);
   ui.avatar().src = src;
   ui.bg().style.backgroundImage = `url("${src}")`;
+}
+
+/* Every call starts from the same visual state: live mic, live camera,
+   not sharing, on speaker. Without this a call that ended muted would open
+   the next one showing a slashed mic over a perfectly live microphone. */
+function resetControls() {
+  onSpeaker = true;
+  for (const [id, glyph] of [['#call-mute', 'mic-fill'], ['#call-cam', 'video-fill'],
+                             ['#call-share', 'screen-fill'], ['#call-speaker', 'speaker-fill']]) {
+    const btn = $(id);
+    if (!btn) continue;
+    btn.classList.remove('off');
+    swapIcon(btn, glyph, GLYPH);
+  }
 }
 
 function show(on) {
@@ -83,6 +103,7 @@ export async function startCall(kind) {
     ui.who().textContent = chat.name || 'Call';
     ui.state().textContent = 'Ringing…';
     setPeerVisual(chat.name, chat.icon_url);
+    resetControls();
     show(true);
     listenSignals();
     for (const uid of others) {
@@ -106,6 +127,7 @@ export async function incoming(row) {
   ui.who().textContent = chat?.name || nameOf(row.caller_id);
   ui.state().textContent = `Incoming ${row.kind} call`;
   setPeerVisual(chat?.name || nameOf(row.caller_id), chat?.icon_url);
+  resetControls();
   show(true);
   playSound();
   const ring = setInterval(playSound, 2500);
@@ -225,6 +247,7 @@ export async function hangup(reason = 'ended') {
   ui.timer().textContent = ''; ui.q().textContent = '';
   ui.remote().srcObject = null; ui.self().srcObject = null;
   ui.avatar().src = ''; ui.bg().style.backgroundImage = '';
+  resetControls();
 }
 
 async function toggleShare() {
@@ -248,21 +271,48 @@ async function toggleShare() {
   } catch (e) { oops(e); }
 }
 
+/* Output routing. The web has exactly one lever here, setSinkId, and only
+   Chromium-based browsers ship it — iOS/Safari route call audio at the OS
+   level and expose nothing to the page. So: switch the sink where that is
+   possible, and where it isn't, say so once instead of leaving a dead
+   permanently-disabled button in a bar that otherwise works. The remote
+   <video> element carries the audio in both call kinds (it is only hidden
+   during voice calls, and hidden media still plays), so it is the sink. */
+async function toggleSpeaker(btn) {
+  const el = ui.remote();
+  if (typeof el.setSinkId !== 'function') {
+    return toast('This browser leaves call audio to the phone — use the system output picker to move it.');
+  }
+  try {
+    const outs = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === 'audiooutput');
+    const next = onSpeaker
+      ? outs.find(d => /receiver|earpiece|headset|headphone|bluetooth/i.test(d.label))
+      : (outs.find(d => /speaker/i.test(d.label)) || outs.find(d => d.deviceId === 'default'));
+    if (!next) return toast('No other audio output is available right now.');
+    await el.setSinkId(next.deviceId);
+    onSpeaker = !onSpeaker;
+    btn.classList.toggle('off', !onSpeaker);
+  } catch (e) { oops(e); }
+}
+
 export function mountCalls() {
   $('#btn-call-audio').onclick = () => startCall('audio');
   $('#btn-call-video').onclick = () => startCall('video');
   $('#call-hang').onclick = () => hangup('ended');
   $('#call-accept').onclick = accept;
   $('#call-share').onclick = toggleShare;
+  $('#call-speaker').onclick = e => toggleSpeaker(e.currentTarget);
   $('#call-mute').onclick = e => {
     const t = local?.getAudioTracks()[0]; if (!t) return;
     t.enabled = !t.enabled;
     e.currentTarget.classList.toggle('off', !t.enabled);
+    swapIcon(e.currentTarget, t.enabled ? 'mic-fill' : 'mic-off-fill', GLYPH);
   };
   $('#call-cam').onclick = e => {
     const t = local?.getVideoTracks()[0]; if (!t) return;
     t.enabled = !t.enabled;
     e.currentTarget.classList.toggle('off', !t.enabled);
+    swapIcon(e.currentTarget, t.enabled ? 'video-fill' : 'video-off-fill', GLYPH);
   };
   // FaceTime-style chrome: once a video call is connected, the name/timer
   // overlay fades out; tapping the video brings it back for a few seconds.
