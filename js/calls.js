@@ -2,6 +2,14 @@
 // Realtime, so there is no extra server to run. Beyond ~4 participants a mesh
 // stops being viable: you need an SFU (LiveKit / mediasoup). Not built here,
 // and the UI says so instead of pretending.
+//
+// Negotiation follows the standard "perfect negotiation" shape: every offer
+// comes out of onnegotiationneeded rather than being hand-rolled at one call
+// site. That is what makes screen sharing work at all — starting a share adds
+// or replaces a video track mid-call, which needs a fresh offer/answer round.
+// The old code only ever offered once, at the very start, so a share during a
+// voice call added a track nobody ever received, and a share during a video
+// call could land mid-handshake with nothing to resolve the glare.
 import { sb, rpc, ins, upd, sel, channel, drop } from './db.js';
 import { S, person, nameOf } from './state.js';
 import { $, h, clear, toast, oops, dur, iconEl, initials, swapIcon } from './util.js';
@@ -10,10 +18,11 @@ import { playSound } from './notify.js';
 let ice = [{ urls: 'stun:stun.l.google.com:19302' }];
 export function setIceServers(list) { if (list?.length) ice = list; }
 
-const peers = new Map();      // user_id -> { pc, senders }
+const peers = new Map();      // user_id -> { pc, polite, makingOffer, ignoreOffer, ice[], camTrack, shareSender }
 let call = null;              // { id, chat_id, kind, role, timer, t0 }
 let local = null;
 let screenTrack = null;
+let shareStream = null;
 let statsTimer = null;
 let revealTimer = null;       // FaceTime-style "tap to bring controls back" during video calls
 let onSpeaker = true;         // only meaningful where setSinkId exists (see toggleSpeaker)
@@ -49,9 +58,11 @@ function resetControls() {
                              ['#call-share', 'screen-fill'], ['#call-speaker', 'speaker-fill']]) {
     const btn = $(id);
     if (!btn) continue;
-    btn.classList.remove('off');
+    btn.classList.remove('off', 'is-live');
     swapIcon(btn, glyph, GLYPH);
   }
+  const share = $('#call-share');
+  if (share) share.title = 'Share screen';
 }
 
 function show(on) {
@@ -71,20 +82,44 @@ async function getLocal(kind) {
   return local;
 }
 
+const anyRemoteVideo = () => [...peers.values()].some(p =>
+  p.pc.getReceivers().some(r => r.track?.kind === 'video' && r.track.readyState === 'live'));
+
 function newPeer(otherId) {
   const pc = new RTCPeerConnection({ iceServers: ice, bundlePolicy: 'max-bundle' });
+  // One side has to yield when both offer at once. Comparing ids is arbitrary
+  // but stable, and both ends compute the same answer without talking.
+  const p = { pc, polite: String(S.me.id) < String(otherId), makingOffer: false, ignoreOffer: false, ice: [], camTrack: null, shareSender: null };
+  peers.set(otherId, p);
   local?.getTracks().forEach(t => pc.addTrack(t, local));
   pc.onicecandidate = e => e.candidate && signal({ type: 'ice', candidate: e.candidate }, otherId);
   pc.ontrack = e => {
     const v = ui.remote();
     if (v.srcObject !== e.streams[0]) v.srcObject = e.streams[0];
+    if (e.track.kind !== 'video') return;
+    // A voice call that suddenly carries video is someone sharing a screen —
+    // the overlay has to actually show it rather than keeping the avatar card.
+    ui.root().classList.add('remote-video');
+    e.track.addEventListener('ended', () => {
+      if (!anyRemoteVideo()) ui.root().classList.remove('remote-video');
+    });
+  };
+  pc.onnegotiationneeded = async () => {
+    try {
+      p.makingOffer = true;
+      await pc.setLocalDescription();
+      signal({ type: 'offer', sdp: pc.localDescription }, otherId);
+    } catch (err) {
+      console.warn('negotiation failed', err);
+    } finally {
+      p.makingOffer = false;
+    }
   };
   pc.onconnectionstatechange = () => {
     if (pc.connectionState === 'connected') { ui.state().textContent = 'Connected'; startTimer(); ui.root().classList.add('connected'); }
     if (['failed', 'closed'].includes(pc.connectionState)) hangup('failed');
   };
-  peers.set(otherId, { pc });
-  return pc;
+  return p;
 }
 
 const signal = (payload, target = null) =>
@@ -101,17 +136,15 @@ export async function startCall(kind) {
     call = { id: row.id, chat_id: chat.chat_id, kind, role: 'caller', answered: false };
     await getLocal(kind);
     ui.who().textContent = chat.name || 'Call';
-    ui.state().textContent = 'Ringing…';
+    ui.state().textContent = 'Ringing\u2026';
     setPeerVisual(chat.name, chat.icon_url);
     resetControls();
     show(true);
     listenSignals();
-    for (const uid of others) {
-      const pc = newPeer(uid);
-      const offer = await pc.createOffer();
-      await pc.setLocalDescription(offer);
-      signal({ type: 'offer', sdp: pc.localDescription }, uid);
-    }
+    // No hand-rolled offer here: adding the local tracks in newPeer() fires
+    // onnegotiationneeded, which is also the path every later renegotiation
+    // (screen share on, screen share off, camera added) travels down.
+    for (const uid of others) newPeer(uid);
     setTimeout(async () => {
       if (call && !call.answered) { await upd('calls', { state: 'missed', ended_at: new Date().toISOString() }, { id: call.id }); hangup('missed'); }
     }, 45000);
@@ -123,7 +156,7 @@ export async function incoming(row) {
   if (call) return;                        // already busy
   if (row.caller_id === S.me.id) return;
   const chat = S.chats.find(c => c.chat_id === row.chat_id);
-  call = { id: row.id, chat_id: row.chat_id, kind: row.kind, role: 'callee', answered: false };
+  call = { id: row.id, chat_id: row.chat_id, kind: row.kind, role: 'callee', answered: false, queued: [] };
   ui.who().textContent = chat?.name || nameOf(row.caller_id);
   ui.state().textContent = `Incoming ${row.kind} call`;
   setPeerVisual(chat?.name || nameOf(row.caller_id), chat?.icon_url);
@@ -141,34 +174,57 @@ async function accept() {
   call.answered = true;
   await getLocal(call.kind);
   await upd('calls', { state: 'accepted', answered_at: new Date().toISOString() }, { id: call.id });
-  ui.state().textContent = 'Connecting…';
+  ui.state().textContent = 'Connecting\u2026';
   show(true);
   signal({ type: 'ready' });
   watchQuality();
-  // any offer that arrived while ringing is replayed by listenSignals()
-  for (const pending of call.pendingOffers || []) await handleOffer(pending.from, pending.sdp);
+  // Everything that arrived while the phone was still ringing — the offer, and
+  // any ICE that raced ahead of it — replayed in the order it came in.
+  const queued = call.queued || [];
+  call.queued = [];
+  for (const q of queued) await onSignal(q.from, q.payload).catch(e => console.warn('replay', e));
 }
 
-async function handleOffer(from, sdp) {
-  if (!local) { (call.pendingOffers = call.pendingOffers || []).push({ from, sdp }); return; }
-  const pc = peers.get(from)?.pc || newPeer(from);
-  await pc.setRemoteDescription(sdp);
-  const answer = await pc.createAnswer();
-  await pc.setLocalDescription(answer);
-  signal({ type: 'answer', sdp: pc.localDescription }, from);
+async function onSignal(from, p) {
+  const peer = peers.get(from) || (p.type === 'offer' ? newPeer(from) : null);
+  if (!peer) return;
+  const pc = peer.pc;
+
+  if (p.type === 'offer' || p.type === 'answer') {
+    const collision = p.type === 'offer' && (peer.makingOffer || pc.signalingState !== 'stable');
+    peer.ignoreOffer = !peer.polite && collision;
+    if (peer.ignoreOffer) return;                 // impolite side keeps its own offer
+    await pc.setRemoteDescription(p.sdp);         // implicit rollback handles the polite case
+    for (const c of peer.ice.splice(0)) {
+      try { await pc.addIceCandidate(c); } catch (e) { console.warn('late ice', e); }
+    }
+    if (p.type === 'offer') {
+      await pc.setLocalDescription();
+      signal({ type: 'answer', sdp: pc.localDescription }, from);
+    } else {
+      call.answered = true;
+    }
+    return;
+  }
+
+  if (p.type === 'ice') {
+    // Candidates routinely beat their description through the table.
+    if (!pc.remoteDescription) { peer.ice.push(p.candidate); return; }
+    try { await pc.addIceCandidate(p.candidate); } catch (e) { if (!peer.ignoreOffer) console.warn('ice', e); }
+  }
 }
 
 function listenSignals() {
   channel('call', ch => ch.on('postgres_changes',
     { event: 'INSERT', schema: 'public', table: 'call_signals', filter: `call_id=eq.${call.id}` },
     async ({ new: s }) => {
-      if (s.sender_id === S.me.id) return;
+      if (!call || s.sender_id === S.me.id) return;
       const p = s.payload;
       try {
-        if (p.type === 'offer') await handleOffer(s.sender_id, p.sdp);
-        else if (p.type === 'answer') { call.answered = true; await peers.get(s.sender_id)?.pc.setRemoteDescription(p.sdp); }
-        else if (p.type === 'ice') await peers.get(s.sender_id)?.pc.addIceCandidate(p.candidate);
-        else if (p.type === 'bye') hangup('ended');
+        if (p.type === 'bye') return hangup('ended');
+        if (p.type === 'ready') return;
+        if (!local) { (call.queued = call.queued || []).push({ from: s.sender_id, payload: p }); return; }
+        await onSignal(s.sender_id, p);
       } catch (e) { console.warn('signal', e); }
     }));
 }
@@ -203,8 +259,10 @@ function watchQuality() {
       if (sender) {
         const prm = sender.getParameters();
         prm.encodings = prm.encodings?.length ? prm.encodings : [{}];
-        prm.encodings[0].maxBitrate = steps[level];
-        prm.encodings[0].scaleResolutionDownBy = 1 + level;
+        // A shared screen that gets scaled down stops being readable, which is
+        // the whole point of sharing it — cap the bitrate but keep it 1:1.
+        prm.encodings[0].maxBitrate = screenTrack ? Math.max(steps[level], 800e3) : steps[level];
+        prm.encodings[0].scaleResolutionDownBy = screenTrack ? 1 : 1 + level;
         try { await sender.setParameters(prm); } catch {}
       }
       ui.q().textContent = ['excellent', 'good', 'fair', 'poor', 'minimal'][level] + (avail ? ` · ${Math.round(avail / 1000)} kbps` : '');
@@ -220,8 +278,9 @@ export async function hangup(reason = 'ended') {
   peers.forEach(({ pc }) => pc.close());
   peers.clear();
   local?.getTracks().forEach(t => t.stop());
-  screenTrack?.stop();
-  local = null; screenTrack = null;
+  shareStream?.getTracks().forEach(t => { try { t.stop(); } catch {} });
+  try { screenTrack?.stop(); } catch {}
+  local = null; screenTrack = null; shareStream = null;
   const duration = t0 ? Math.round((Date.now() - t0) / 1000) : 0;
   const state = reason === 'missed' ? 'missed' : reason === 'failed' ? 'failed' : duration ? 'ended' : 'declined';
   try {
@@ -243,32 +302,84 @@ export async function hangup(reason = 'ended') {
   await new Promise(r => setTimeout(r, 650));
   ui.root().classList.remove('hanging-up');
   show(false);
-  ui.root().classList.remove('connected', 'show-meta');
+  ui.root().classList.remove('connected', 'show-meta', 'sharing', 'remote-video');
   ui.timer().textContent = ''; ui.q().textContent = '';
   ui.remote().srcObject = null; ui.self().srcObject = null;
   ui.avatar().src = ''; ui.bg().style.backgroundImage = '';
   resetControls();
 }
 
+/* ── screen share ────────────────────────────────────────────────── */
+function markShare(on) {
+  const btn = $('#call-share');
+  if (!btn) return;
+  btn.classList.toggle('is-live', on);
+  btn.title = on ? 'Stop sharing' : 'Share screen';
+  swapIcon(btn, on ? 'screen-off-fill' : 'screen-fill', GLYPH);
+}
+
+async function startShare() {
+  const md = navigator.mediaDevices;
+  if (!md?.getDisplayMedia) {
+    return toast('This browser cannot capture a screen. Mobile Safari and Chrome on Android do not offer it to web apps at all — share from a laptop instead.', true);
+  }
+  let stream;
+  try {
+    stream = await md.getDisplayMedia({ video: { frameRate: 15 }, audio: false });
+  } catch (e) {
+    if (e?.name !== 'NotAllowedError' && e?.name !== 'AbortError') oops(e);
+    return;                                     // picker dismissed: nothing to report
+  }
+  const track = stream.getVideoTracks()[0];
+  if (!track) { stream.getTracks().forEach(t => t.stop()); return toast('That capture had no video in it.', true); }
+  screenTrack = track;
+  shareStream = stream;
+  for (const p of peers.values()) {
+    const sender = p.pc.getSenders().find(s => s.track?.kind === 'video');
+    if (sender) {
+      p.camTrack = sender.track;                // remember the camera to come back to
+      try { await sender.replaceTrack(track); } catch (e) { console.warn('replace', e); }
+    } else {
+      // Voice call: there is no video transceiver yet. addTrack creates one and
+      // fires onnegotiationneeded, which is the renegotiation that used to be
+      // missing — without it the other side never learned the track existed.
+      p.shareSender = p.pc.addTrack(track, stream);
+    }
+  }
+  track.addEventListener('ended', () => { stopShare().catch(e => console.warn(e)); });
+  ui.self().srcObject = stream;
+  ui.self().hidden = false;
+  ui.root().classList.add('sharing');
+  markShare(true);
+  toast('Sharing your screen.');
+}
+
+async function stopShare() {
+  const track = screenTrack;
+  if (!track) return;
+  screenTrack = null;
+  for (const p of peers.values()) {
+    if (p.shareSender) {
+      try { p.pc.removeTrack(p.shareSender); } catch (e) { console.warn('removeTrack', e); }
+      p.shareSender = null;
+      continue;
+    }
+    const sender = p.pc.getSenders().find(s => s.track === track);
+    if (sender) { try { await sender.replaceTrack(p.camTrack || null); } catch (e) { console.warn('restore', e); } }
+    p.camTrack = null;
+  }
+  try { track.stop(); } catch {}
+  shareStream?.getTracks().forEach(t => { try { t.stop(); } catch {} });
+  shareStream = null;
+  ui.self().srcObject = local;
+  ui.self().hidden = call?.kind !== 'video';
+  ui.root().classList.remove('sharing');
+  markShare(false);
+}
+
 async function toggleShare() {
   if (!call) return;
-  if (screenTrack) {
-    screenTrack.stop(); screenTrack = null;
-    const camTrack = local.getVideoTracks()[0];
-    for (const { pc } of peers.values()) pc.getSenders().find(s => s.track?.kind === 'video')?.replaceTrack(camTrack || null);
-    $('#call-share').classList.remove('off');
-    return;
-  }
-  try {
-    const stream = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: 15 }, audio: false });
-    screenTrack = stream.getVideoTracks()[0];
-    for (const { pc } of peers.values()) {
-      const sender = pc.getSenders().find(s => s.track?.kind === 'video');
-      sender ? sender.replaceTrack(screenTrack) : pc.addTrack(screenTrack, stream);
-    }
-    screenTrack.onended = () => toggleShare();
-    $('#call-share').classList.add('off');
-  } catch (e) { oops(e); }
+  try { screenTrack ? await stopShare() : await startShare(); } catch (e) { oops(e); }
 }
 
 /* Output routing. The web has exactly one lever here, setSinkId, and only
