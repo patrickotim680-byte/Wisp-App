@@ -1,17 +1,17 @@
 import { initDb, sb, rpc } from './db.js';
 import { saveEnvLocally, forgetEnvLocally, normalizeUrl, normalizeKey, envError } from './env.js';
 import { S } from './state.js';
-import { $, $$, h, clear, toast, oops, paintIcons, initials, modal, closeModal, promptBox, setActiveNav } from './util.js';
+import { $, $$, h, clear, toast, oops, paintIcons, initials, modal, closeModal, promptBox, popMenu, closePop, setActiveNav } from './util.js';
 import { mountAuthUI, loadMe, twoStepGate, initIdentity, startPresence, signOut } from './auth.js';
 import { applySettings, saveSettings } from './theme.js';
 import { loadChats, loadFolders, renderChatList, openChat, closeChat, subscribeGlobal,
-         updateBadge, newGroupFlow, startDm, renderConvHeader } from './chats.js';
+         updateBadge, newGroupFlow, startDm, renderConvHeader, chatPhoto } from './chats.js';
 import { warmAllCached } from './cache.js';
 import { mountThread, loadMessages } from './thread.js';
 import { mountComposer } from './composer.js';
 import { mountCalls, setIceServers } from './calls.js';
 import { openChatInfo, openDigest, searchInChat, runSearch, viewPeople, viewCalls,
-         viewSaved, viewScheduled, openSide, personRow } from './panels.js';
+         viewSaved, openSide, personRow, convMenu, openPhotoViewer, openProfileCard } from './panels.js';
 import { openSettings } from './settings.js';
 import { registerDevice, askPermission } from './notify.js';
 
@@ -19,8 +19,8 @@ import { registerDevice, askPermission } from './notify.js';
    screen — in plain mobile Safari it is absent entirely. Code that feature
    tests ('Notification' in window) was fine, but reading Notification.permission
    to render the notifications row in Settings threw a ReferenceError there,
-   which meant tapping the gear or the avatar on an iPhone did nothing at all:
-   the whole panel died before it could open. A stand-in with permission set to
+   which meant tapping the gear on an iPhone did nothing at all: the whole
+   panel died before it could open. A stand-in with permission set to
    'unsupported' keeps every existing check honest — nothing is ever granted,
    so nothing tries to show a notification — while letting the UI render. */
 if (!('Notification' in window)) {
@@ -103,8 +103,6 @@ async function start() {
     hideBoot();
     $('#app').hidden = false;
 
-    $('#me-avatar').src = S.me.photo_url || avatarFallback(S.me.display_name);
-
     mountThread(); mountComposer(); mountCalls(); wireChrome();
     await loadFolders();
     await loadChats();
@@ -125,9 +123,6 @@ async function start() {
   }
 }
 
-const avatarFallback = name => 'data:image/svg+xml;utf8,' + encodeURIComponent(
-  `<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64"><rect width="64" height="64" rx="32" fill="#d9d2c7"/><text x="32" y="40" font-family="sans-serif" font-size="24" fill="#4a4438" text-anchor="middle">${initials(name)}</text></svg>`);
-
 function cancelSearch() {
   const q = $('#q');
   q.value = '';
@@ -136,42 +131,41 @@ function cancelSearch() {
   q.blur();
 }
 
+/* One tab bar, one job per tab. The avatar button that used to sit at the far
+   end opened the very same Settings panel as the gear beside it — two controls
+   for one destination. Your profile now lives at the top of Settings, which is
+   where people already look for it. */
+async function goto(nav) {
+  setActiveNav(nav);
+  if (nav === 'settings') return openSettings();
+  S.view = nav;
+  $('#q').value = '';
+  $('#btn-search-cancel').classList.remove('is-shown');
+  openSide(null);
+  if (nav === 'chats') { $('#list-title').textContent = 'Chats'; await loadFolders(); renderChatList(); }
+  if (nav === 'people') await viewPeople();
+  if (nav === 'calls') await viewCalls();
+  if (nav === 'saved') await viewSaved();
+}
+
 function wireChrome() {
   $$('.rail-btn[data-nav]').forEach(btn => btn.onclick = async () => {
-    const nav = btn.dataset.nav;
-    setActiveNav(nav);
     // Every one of these can touch the network, and an unhandled rejection in
     // a tab handler is a tab that silently does nothing when tapped.
-    try {
-      if (nav === 'settings') return await openSettings();
-      S.view = nav;
-      $('#q').value = '';
-      $('#btn-search-cancel').classList.remove('is-shown');
-      openSide(null);
-      if (nav === 'chats') { $('#list-title').textContent = 'Chats'; await loadFolders(); renderChatList(); }
-      if (nav === 'people') await viewPeople();
-      if (nav === 'calls') await viewCalls();
-      if (nav === 'saved') await viewSaved();
-      if (nav === 'scheduled') await viewScheduled();
-    } catch (e) { oops(e); }
+    try { await goto(btn.dataset.nav); } catch (e) { oops(e); }
   });
 
-  $('#btn-me').onclick = async () => { try { await openSettings(); } catch (e) { oops(e); } };
-  $('#btn-new-group').onclick = () => modal(h('h3', { class: 'display' }, 'Start something'),
-    h('div', { class: 'stack' },
-      h('button', { class: 'btn', onclick: () => { closeModal(); newGroupFlow('group'); } }, 'New group'),
-      h('button', { class: 'btn', onclick: () => { closeModal(); newGroupFlow('broadcast'); } }, 'New broadcast list'),
-      h('button', {
-        class: 'btn ghost', onclick: async () => {
-          closeModal();
-          const code = await promptBox('Join with invite', { label: 'Invite code or link' });
-          if (!code) return;
-          try {
-            const id = await rpc('join_via_invite', { p_code: inviteCode(code) });
-            await loadChats(); openChat(id);
-          } catch (e) { oops(e); }
-        },
-      }, 'Join with an invite link')));
+  $('#btn-new-group').onclick = e => popMenu([
+    { label: 'New group', icon: 'group-add', onclick: () => newGroupFlow('group') },
+    { label: 'New broadcast list', icon: 'broadcast', onclick: () => newGroupFlow('broadcast') },
+    { sep: true },
+    { label: 'Join with an invite link', icon: 'globe', onclick: async () => {
+      const code = await promptBox('Join with invite', { label: 'Invite code or link' });
+      if (!code) return;
+      const id = await rpc('join_via_invite', { p_code: inviteCode(code) });
+      await loadChats(); openChat(id);
+    } },
+  ], { anchor: e.currentTarget, title: 'Start something' });
 
   $('#btn-new-chat').onclick = async () => {
     const results = h('div', { class: 'stack' });
@@ -204,14 +198,22 @@ function wireChrome() {
   // but S.chat/S.msgs and the realtime subscription stayed pointed at that
   // chat — closeChat() does the full teardown instead.
   $('#btn-back').onclick = closeChat;
-  $('#btn-info').onclick = openChatInfo;
   $('#conv-id').onclick = openChatInfo;
-  $('#btn-digest').onclick = () => openDigest();
-  $('#btn-search-in').onclick = searchInChat;
+  $('#btn-conv-more').onclick = convMenu;
+  // The portrait in the header is now the way into a photo and a profile,
+  // which is what tapping a face is supposed to do everywhere else.
+  $('#btn-conv-photo').onclick = () => {
+    const c = S.chat;
+    if (!c) return;
+    if (c.type === 'dm' && c.other_id) return openProfileCard(c.other_id);
+    const photo = chatPhoto(c);
+    photo ? openPhotoViewer(photo, c.name || '') : openChatInfo();
+  };
 
   document.addEventListener('keydown', e => {
     if (e.key === 'Escape' && !$('#modal').open) { if (!$('#side').hidden) openSide(null); }
     if ((e.metaKey || e.ctrlKey) && e.key === 'k') { e.preventDefault(); $('#q').focus(); }
+    if ((e.metaKey || e.ctrlKey) && e.key === 'f' && S.chat) { e.preventDefault(); searchInChat(); }
   });
   addEventListener('hashchange', routeHash);
 }
