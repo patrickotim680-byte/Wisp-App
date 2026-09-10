@@ -1,8 +1,9 @@
-import { sb, rpc, sel, ins, upd, del } from './db.js';
+import { sb, rpc, sel, ins, upd, del, upload } from './db.js';
 import { S, person, nameOf } from './state.js';
-import { $, $$, h, clear, toast, oops, modal, closeModal, confirmBox, promptBox,
-         initials, shortWhen, clock, dur, bytes, iconEl, debounce, lastSeenText } from './util.js';
-import { applyWallpaper, applyContactAccent, saveSettings, ACCENTS, toCustom } from './theme.js';
+import { $, $$, h, clear, toast, oops, modal, closeModal, confirmBox, promptBox, popMenu, longPress,
+         initials, shortWhen, clock, dur, bytes, iconEl, debounce, lastSeenText, avatarData, copyText } from './util.js';
+import { applyWallpaper, applyChatStyle, saveSettings, saveChatStyle, startStyleDraft, setStyleDraft,
+         cancelStyleDraft, styleDraft, paintWall, WALLPAPERS, ACCENTS, toCustom } from './theme.js';
 import { thumbUrl, compressImage } from './media.js';
 import { jumpTo } from './thread.js';
 
@@ -11,33 +12,280 @@ export function openSide(node) {
   if (!node) { side.hidden = true; app.classList.remove('has-side'); return; }
   clear(side).append(node);
   side.hidden = false; app.classList.add('has-side');
+  side.scrollTop = 0;
 }
 
-/* ── chat details ──────────────────────────────────────────────────────── */
+function filePick(accept, cb) {
+  const i = h('input', { type: 'file', accept, hidden: true, onchange: e => e.target.files[0] && cb(e.target.files[0]) });
+  document.body.append(i); i.click(); setTimeout(() => i.remove(), 60000);
+}
+
+const sideHead = (title, onBack, backLabel = 'Close') => h('div', { class: 'side-head' },
+  h('h3', { class: 'display' }, title),
+  h('button', { class: 'btn small ghost', onclick: onBack }, backLabel));
+
+const seg = (label, control, note) => h('div', { class: 'kv' },
+  h('div', {}, h('span', { style: { color: 'var(--ink)' } }, label), note && h('div', { class: 'hint' }, note)), control);
+
+const sw = (val, fn) => {
+  const b = h('button', { class: 'switch', role: 'switch', 'aria-checked': String(!!val) });
+  b.onclick = async () => {
+    const n = b.getAttribute('aria-checked') !== 'true';
+    b.setAttribute('aria-checked', String(n));
+    try { await fn(n); } catch (e) { oops(e); b.setAttribute('aria-checked', String(!n)); }
+  };
+  return b;
+};
+
+/* ── photo viewer ───────────────────────────────────────────────────────
+   Tapping a portrait anywhere in the app lands here. It used to land nowhere
+   at all: avatars were decoration, and the only large copy of anyone's photo
+   was the 84px one in the details panel. */
+export function openPhotoViewer(url, name = '') {
+  if (!url) return toast('No photo has been set.');
+  const layer = h('div', { class: 'photo-view' });
+  const close = () => {
+    layer.classList.remove('is-open');
+    removeEventListener('keydown', onKey, true);
+    setTimeout(() => layer.remove(), 200);
+  };
+  const onKey = e => { if (e.key === 'Escape') { e.stopPropagation(); close(); } };
+  layer.append(
+    h('div', { class: 'photo-bar' },
+      h('button', { class: 'icon-btn', title: 'Close', onclick: close }, iconEl('x', 20)),
+      h('b', {}, name || ''),
+      h('a', { class: 'icon-btn', href: url, download: '', target: '_blank', rel: 'noopener', title: 'Open full size' }, iconEl('download', 20))),
+    h('figure', { class: 'photo-frame' },
+      h('img', { src: url, alt: name || 'Photo', onerror: e => { e.target.replaceWith(h('p', { class: 'hint' }, 'That photo could not be loaded.')); } })));
+  layer.addEventListener('click', e => { if (e.target === layer || e.target.closest('.photo-frame')) close(); });
+  document.body.append(layer);
+  addEventListener('keydown', onKey, true);
+  requestAnimationFrame(() => layer.classList.add('is-open'));
+}
+
+/* ── profile card ───────────────────────────────────────────────── */
+export async function openProfileCard(userId) {
+  let p = person(userId);
+  if (!p) {
+    try {
+      const [fresh] = await rpc('people_info', { p_ids: [userId] });
+      if (fresh) { S.people.set(userId, fresh); p = fresh; }
+    } catch (e) { return oops(e); }
+  }
+  if (!p) return toast('That profile is not available.', true);
+  const photo = p.photo_url || null;
+  const act = (label, icon, fn) => h('button', { class: 'btn', onclick: async () => { closeModal(); try { await fn(); } catch (e) { oops(e); } } },
+    iconEl(icon, 17), label);
+  modal(
+    h('div', { class: 'profile-card' },
+      h('button', {
+        class: 'profile-face', title: photo ? 'View photo' : 'No photo set',
+        onclick: () => {
+          if (!photo) return toast(`${p.display_name} has not set a photo.`);
+          closeModal(); openPhotoViewer(photo, p.display_name);
+        },
+      }, h('img', { src: photo || avatarData(p.display_name), alt: p.display_name }),
+        photo && h('span', { class: 'profile-zoom' }, iconEl('eye', 15))),
+      h('b', { class: 'display' }, p.nickname || p.display_name),
+      p.nickname && h('small', { class: 'hint' }, p.display_name),
+      h('small', { class: 'hint' }, lastSeenText(p) || ''),
+      p.about && h('p', { class: 'muted' }, p.about),
+      h('div', { class: 'profile-acts' },
+        act('Message', 'chat', async () => (await import('./chats.js')).startDm(p.id)),
+        act('Voice', 'call', async () => {
+          await (await import('./chats.js')).startDm(p.id);
+          (await import('./calls.js')).startCall('audio');
+        }),
+        act('Video', 'video', async () => {
+          await (await import('./chats.js')).startDm(p.id);
+          (await import('./calls.js')).startCall('video');
+        }))),
+    h('div', { class: 'modal-actions' },
+      p.email && h('button', { class: 'btn ghost', onclick: () => copyText(p.email) }, 'Copy email'),
+      h('button', { class: 'btn ghost', onclick: closeModal }, 'Close')));
+}
+
+/* ── theme & wallpaper for one chat ─────────────────────────────────────
+   Everything in here is a draft: picking a colour or a wallpaper repaints the
+   real thread behind the panel and the small preview above, and writes to
+   nothing. Apply is the only thing that touches the database, and Cancel puts
+   the chat back exactly as it was — including an uploaded photo, which is
+   only pushed to storage once it has actually been chosen. */
+export function openChatStyle() {
+  const c = S.chat;
+  if (!c) return toast('Open a chat first.');
+  startStyleDraft();
+  let pending = null;                 // { blob, url } previewing, not uploaded
+
+  const d = () => styleDraft() || {};
+  const globalWall = () => S.settings?.wallpaper_url ?? null;
+  const globalDim = () => 1 - (S.settings?.wallpaper_opacity ?? 1);
+  const sameWall = (a, b) => (a ?? null) === (b ?? null);
+
+  const previewWall = h('div', { class: 'wall' });
+  const preview = h('div', { class: 'style-preview' }, previewWall,
+    h('div', { class: 'style-thread' },
+      h('div', { class: 'msg in' }, h('div', { class: 'bub' }, 'Does this one feel right?')),
+      h('div', { class: 'msg out' }, h('div', { class: 'bub' }, 'Warmer. Keep it.')),
+      h('div', { class: 'msg in' }, h('div', { class: 'bub' }, 'Nothing saves until you apply.'))));
+
+  const tiles = h('div', { class: 'wall-grid' });
+  const swatches = h('div', { class: 'swatches' });
+  const dimOut = h('small', { class: 'hint' });
+  const dimRange = h('input', {
+    type: 'range', min: 0, max: 0.8, step: 0.05,
+    oninput: e => { setStyleDraft({ dim: +e.target.value }); paint(); },
+  });
+
+  function tile(label, value, node) {
+    const t = h('button', {
+      class: 'wall-tile' + (sameWall(d().wallpaper, value) ? ' is-on' : ''), title: label, type: 'button',
+      onclick: () => {
+        if (pending && value !== pending.url) { URL.revokeObjectURL(pending.url); pending = null; }
+        setStyleDraft({ wallpaper: value });
+        paint();
+      },
+    }, node || h('span', { class: 'wall' }), h('small', {}, label));
+    if (!node) paintWall(t.querySelector('.wall'), value ?? globalWall(), { dim: 0 });
+    return t;
+  }
+
+  function paint() {
+    const cur = d();
+    paintWall(previewWall, cur.wallpaper ?? globalWall(), { dim: cur.dim ?? globalDim() });
+
+    clear(tiles);
+    tiles.append(tile('Account default', null));
+    if (pending) tiles.append(tile('Your photo', pending.url));
+    tiles.append(h('button', {
+      class: 'wall-tile is-add', type: 'button', title: 'Upload a photo',
+      onclick: () => filePick('image/*', async f => {
+        try {
+          const { blob } = await compressImage(f);
+          if (pending) URL.revokeObjectURL(pending.url);
+          pending = { blob, url: URL.createObjectURL(blob) };
+          setStyleDraft({ wallpaper: pending.url });
+          paint();
+          toast('Preview only — press Apply to keep it.');
+        } catch (e) { oops(e); }
+      }),
+    }, h('span', { class: 'wall wall-add' }, iconEl('image', 20)), h('small', {}, 'Photo')));
+    WALLPAPERS.forEach(w => tiles.append(tile(w.label, 'preset:' + w.id)));
+
+    clear(swatches);
+    swatches.append(h('button', {
+      class: 'swatch swatch-off' + (d().accent ? '' : ' is-on'), title: 'Account accent', type: 'button',
+      onclick: () => { setStyleDraft({ accent: null }); paint(); },
+    }));
+    Object.entries(ACCENTS).forEach(([, a]) => {
+      const val = toCustom(a);
+      swatches.append(h('button', {
+        class: 'swatch' + (d().accent === val ? ' is-on' : ''), title: a.label, type: 'button',
+        style: { background: `oklch(${a.l} ${a.c} ${a.h})` },
+        onclick: () => { setStyleDraft({ accent: val }); paint(); },
+      }));
+    });
+
+    const dim = d().dim ?? globalDim();
+    dimRange.value = String(dim);
+    dimOut.textContent = dim > 0 ? `${Math.round(dim * 100)}% dimmed` : 'no dimming';
+  }
+
+  const done = () => { if (pending) URL.revokeObjectURL(pending.url); pending = null; };
+
+  const cancel = () => { done(); cancelStyleDraft(); openChatInfo(); };
+
+  const apply = async () => {
+    const cur = d();
+    try {
+      let value = cur.wallpaper ?? null;
+      if (pending && value === pending.url) {
+        const path = `${S.me.id}/${crypto.randomUUID()}.webp`;
+        await upload('wallpapers', path, pending.blob, 'image/webp');
+        value = path;
+      }
+      await saveChatStyle({
+        accent: cur.accent ?? null,
+        wallpaper_url: value,
+        wallpaper_dim: cur.dim ?? null,
+      });
+      done();
+      toast('Applied to this chat.');
+      openChatInfo();
+    } catch (e) { oops(e); }
+  };
+
+  paint();
+  openSide(h('div', { class: 'style-panel' },
+    sideHead('Theme & wallpaper', cancel, 'Cancel'),
+    h('p', { class: 'hint' }, `Only for ${c.name || 'this chat'}, and only on your side of it.`),
+    preview,
+    h('section', {}, h('h3', {}, 'Chat colour'), swatches,
+      h('p', { class: 'hint' }, 'Overrides your account accent while this chat is open.')),
+    h('section', {}, h('h3', {}, 'Wallpaper'), tiles),
+    h('section', {}, seg('Dim', h('div', { class: 'range-cell' }, dimRange, dimOut),
+      'Pulls the wallpaper back so text stays easy to read.')),
+    h('div', { class: 'panel-actions' },
+      h('button', { class: 'btn ghost', onclick: () => { setStyleDraft({ accent: null, wallpaper: null, dim: null }); paint(); } }, 'Reset'),
+      h('button', { class: 'btn', onclick: cancel }, 'Cancel'),
+      h('button', { class: 'btn primary', onclick: apply }, 'Apply'))));
+}
+
+/* ── the conversation overflow menu (the ⋮ in the header) ────────────── */
+export function convMenu(e) {
+  const c = S.chat;
+  if (!c) return;
+  popMenu([
+    { label: c.type === 'dm' ? 'Contact info' : 'Group info', icon: 'info', onclick: openChatInfo },
+    { label: 'Search in chat', icon: 'search', onclick: searchInChat },
+    { label: 'Catch me up', icon: 'spark', onclick: () => openDigest() },
+    { sep: true },
+    { label: 'Theme & wallpaper', icon: 'palette', onclick: openChatStyle },
+    { label: 'Media & files', icon: 'image', onclick: sharedMedia },
+    { label: 'Export conversation', icon: 'download', onclick: exportChat },
+    { sep: true },
+    { label: 'Clear history', icon: 'eraser', danger: true, onclick: clearHistory },
+  ], { anchor: e.currentTarget, title: c.name || 'Chat' });
+}
+
+export async function clearHistory() {
+  const c = S.chat;
+  if (!c) return;
+  if (!await confirmBox('Clear this history?', 'Only removes it for you. The other side keeps their copy.', 'Clear')) return;
+  await rpc('clear_history', { p_chat: c.chat_id });
+  const { loadChats } = await import('./chats.js');
+  const { loadMessages } = await import('./thread.js');
+  await loadMessages();
+  loadChats();
+}
+
+/* ── chat details ─────────────────────────────────────────────── */
 export async function openChatInfo() {
   const c = S.chat; if (!c) return;
   const meRow = S.members.find(m => m.user_id === S.me.id);
   const iAmAdmin = ['owner', 'admin'].includes(meRow?.role);
   const p = c.type === 'dm' ? person(c.other_id) : null;
+  const photo = c.icon_url || p?.photo_url || null;
   const wrap = h('div', {});
-  const seg = (label, control, note) => h('div', { class: 'kv' },
-    h('div', {}, h('span', { style: { color: 'var(--ink)' } }, label), note && h('div', { class: 'hint' }, note)), control);
-  const sw = (val, fn) => {
-    const b = h('button', { class: 'switch', role: 'switch', 'aria-checked': String(!!val) });
-    b.onclick = async () => { const n = b.getAttribute('aria-checked') !== 'true'; b.setAttribute('aria-checked', String(n)); try { await fn(n); } catch (e) { oops(e); } };
-    return b;
-  };
 
-  wrap.append(h('div', { class: 'side-head' },
-    h('h3', { class: 'display' }, c.name || 'Details'),
-    h('button', { class: 'btn small ghost', onclick: () => openSide(null) }, 'Close')));
+  wrap.append(sideHead(c.name || 'Details', () => openSide(null)));
+
+  wrap.append(h('section', { class: 'info-hero' },
+    h('button', {
+      class: 'hero-face', title: photo ? 'View photo' : 'No photo set',
+      onclick: () => photo ? openPhotoViewer(photo, c.name || '') : toast('No photo has been set for this chat.'),
+    }, h('img', { src: photo || avatarData(c.name || 'Chat'), alt: '' })),
+    h('b', { class: 'display' }, (p?.nickname || c.name) || 'Chat'),
+    h('small', { class: 'hint' }, p ? (lastSeenText(p) || '') : `${S.members.length} members`),
+    p?.about && h('p', { class: 'muted' }, p.about),
+    h('div', { class: 'hero-acts' },
+      c.type !== 'broadcast' && h('button', { class: 'btn', onclick: async () => (await import('./calls.js')).startCall('audio') }, iconEl('call', 17), 'Voice'),
+      c.type !== 'broadcast' && h('button', { class: 'btn', onclick: async () => (await import('./calls.js')).startCall('video') }, iconEl('video', 17), 'Video'),
+      h('button', { class: 'btn', onclick: openChatStyle }, iconEl('palette', 17), 'Theme'),
+      h('button', { class: 'btn', onclick: sharedMedia }, iconEl('image', 17), 'Media'))));
 
   if (p) wrap.append(h('section', {},
-    h('div', { style: { display: 'grid', justifyItems: 'center', gap: '6px' } },
-      p.photo_url ? h('img', { class: 'av', src: p.photo_url, style: { width: '84px', height: '84px' } })
-        : h('div', { class: 'av', style: { width: '84px', height: '84px', fontSize: '1.3em' } }, initials(p.display_name)),
-      h('b', {}, p.display_name), h('small', { class: 'hint' }, lastSeenText(p) || ''),
-      p.about && h('p', { class: 'muted', style: { textAlign: 'center' } }, p.about)),
+    h('h3', {}, 'This contact'),
     seg('Nickname', h('button', {
       class: 'btn small', onclick: async () => {
         const v = await promptBox('Nickname', { value: p.nickname || '', note: 'Only you see it.' });
@@ -49,17 +297,6 @@ export async function openChatInfo() {
         toast('Saved'); openChatInfo();
       },
     }, p.nickname || 'Set')),
-    seg('Chat accent', h('div', { class: 'swatches' },
-      Object.entries(ACCENTS).map(([k, a]) => h('button', {
-        class: 'swatch', style: { background: `oklch(${a.l} ${a.c} ${a.h})` },
-        onclick: async () => {
-          const val = toCustom(a);
-          await sb.from('contacts').upsert({ user_id: S.me.id, contact_id: p.id, accent: val });
-          const [fresh] = await rpc('people_info', { p_ids: [p.id] });
-          S.people.set(p.id, fresh);
-          applyContactAccent(val);
-        },
-      }))), 'Overrides your accent while this chat is open.'),
     seg('Favourite', sw(p.favorite, async v => {
       await sb.from('contacts').upsert({ user_id: S.me.id, contact_id: p.id, favorite: v });
       const [fresh] = await rpc('people_info', { p_ids: [p.id] }); S.people.set(p.id, fresh);
@@ -84,16 +321,22 @@ export async function openChatInfo() {
     const list = h('div', { class: 'stack' }, S.members.map(m => {
       const pp = person(m.user_id);
       return h('div', { class: 'member' },
-        h('div', { class: 'av', style: { width: '30px', height: '30px', fontSize: '11px' } }, initials(pp?.display_name || '?')),
+        h('button', {
+          class: 'member-face', title: 'View profile',
+          onclick: () => openProfileCard(m.user_id),
+        }, h('img', { src: pp?.photo_url || avatarData(pp?.display_name || '?'), alt: '' })),
         m.user_id === S.me.id ? 'You' : (pp?.display_name || 'Unknown'),
         h('span', { class: 'role' }, m.role),
         iAmAdmin && m.user_id !== S.me.id && h('button', {
-          class: 'btn small ghost', onclick: () => modal(h('h3', { class: 'display' }, pp?.display_name || 'Member'),
-            h('div', { class: 'stack' },
-              h('button', { class: 'btn', onclick: async () => { closeModal(); await rpc('set_member_role', { p_chat: c.chat_id, p_user: m.user_id, p_role: m.role === 'admin' ? 'member' : 'admin' }); S.members = await sel('chat_members', { select: '*', eq: { chat_id: c.chat_id } }); openChatInfo(); } }, m.role === 'admin' ? 'Demote to member' : 'Make admin'),
-              h('button', { class: 'btn', onclick: async () => { closeModal(); (await import('./chats.js')).startDm(m.user_id); } }, 'Message directly'),
-              h('button', { class: 'btn danger', onclick: async () => { closeModal(); await rpc('remove_member', { p_chat: c.chat_id, p_user: m.user_id }); S.members = await sel('chat_members', { select: '*', eq: { chat_id: c.chat_id } }); openChatInfo(); } }, 'Remove from group'))),
-        }, '⋯'));
+          class: 'icon-btn small-btn', title: 'Member options',
+          onclick: e => popMenu([
+            { label: m.role === 'admin' ? 'Demote to member' : 'Make admin', icon: 'shield', onclick: async () => { await rpc('set_member_role', { p_chat: c.chat_id, p_user: m.user_id, p_role: m.role === 'admin' ? 'member' : 'admin' }); S.members = await sel('chat_members', { select: '*', eq: { chat_id: c.chat_id } }); openChatInfo(); } },
+            { label: 'View profile', icon: 'person', onclick: () => openProfileCard(m.user_id) },
+            { label: 'Message directly', icon: 'chat', onclick: async () => (await import('./chats.js')).startDm(m.user_id) },
+            { sep: true },
+            { label: 'Remove from group', icon: 'trash', danger: true, onclick: async () => { await rpc('remove_member', { p_chat: c.chat_id, p_user: m.user_id }); S.members = await sel('chat_members', { select: '*', eq: { chat_id: c.chat_id } }); openChatInfo(); } },
+          ], { anchor: e.currentTarget, title: pp?.display_name || 'Member' }),
+        }, iconEl('dots', 18)));
     }));
     const { data: chatRow } = await sb.from('chats').select('*').eq('id', c.chat_id).single();
     wrap.append(h('section', {},
@@ -130,7 +373,7 @@ export async function openChatInfo() {
           const link = `${location.origin}/#join/${encodeURIComponent(chatRow.invite_code)}`;
           modal(h('h3', { class: 'display' }, 'Invite link'), h('code', {}, link),
             h('div', { class: 'modal-actions' },
-              h('button', { class: 'btn', onclick: () => navigator.clipboard.writeText(link).then(() => toast('Copied')) }, 'Copy'),
+              h('button', { class: 'btn', onclick: () => copyText(link) }, 'Copy'),
               iAmAdmin && h('button', { class: 'btn danger', onclick: async () => { await rpc('reset_invite', { p_chat: c.chat_id }); closeModal(); toast('Old link revoked'); } }, 'Reset link'),
               h('button', { class: 'btn ghost', onclick: closeModal }, 'Close')));
         },
@@ -166,26 +409,30 @@ export async function openChatInfo() {
     seg('Notifications', h('select', {
       onchange: e => upd('chat_members', { notify_level: e.target.value }, { chat_id: c.chat_id, user_id: S.me.id }),
     }, [['all', 'All messages'], ['mentions', 'Mentions only'], ['none', 'Nothing']]
-      .map(([v, l]) => h('option', { value: v, selected: (S.members.find(m => m.user_id === S.me.id)?.notify_level) === v }, l)))),
-    seg('Chat wallpaper', h('button', {
-      class: 'btn small', onclick: () => {
-        const i = h('input', { type: 'file', accept: 'image/*', hidden: true, onchange: async e => {
-          const f = e.target.files[0]; if (!f) return;
-          try {
-            const { blob } = await compressImage(f);
-            const path = `${S.me.id}/${crypto.randomUUID()}.webp`;
-            await (await import('./db.js')).upload('wallpapers', path, blob, 'image/webp');
-            await upd('chat_members', { wallpaper_url: path }, { chat_id: c.chat_id, user_id: S.me.id });
-            S.members = await sel('chat_members', { select: '*', eq: { chat_id: c.chat_id } });
-            applyWallpaper(); toast('Chat wallpaper set');
-          } catch (err) { oops(err); }
-        } });
-        document.body.append(i); i.click(); setTimeout(() => i.remove(), 60000);
+      .map(([v, l]) => h('option', { value: v, selected: (meRow?.notify_level) === v }, l)))),
+    S.folders.length ? seg('Tab', h('select', {
+      onchange: async e => { await upd('chat_members', { folder_id: e.target.value || null }, { chat_id: c.chat_id, user_id: S.me.id }); (await import('./chats.js')).loadChats(); },
+    }, h('option', { value: '' }, 'None'),
+      ...S.folders.map(f => h('option', { value: f.id, selected: f.id === c.folder_id }, f.name))) ) : null,
+    seg('Chat lock', h('button', {
+      class: 'btn small', onclick: async () => {
+        if (c.locked) { await rpc('set_chat_lock', { p_chat: c.chat_id, p_pin: null }); }
+        else {
+          const pin = await promptBox('Chat lock', { label: 'PIN', type: 'password', note: 'Asked once per session before this chat opens.' });
+          if (!pin) return;
+          await rpc('set_chat_lock', { p_chat: c.chat_id, p_pin: pin });
+        }
+        (await import('./chats.js')).loadChats();
+        openChatInfo();
       },
-    }, 'Upload'), 'Falls back to your global wallpaper when unset.'),
-    h('button', { class: 'btn small', onclick: exportChat }, 'Export conversation'),
-    h('button', { class: 'btn small', onclick: openDigest }, 'Catch me up'),
-    h('button', { class: 'btn small', onclick: sharedMedia }, 'Shared media')));
+    }, c.locked ? 'On' : 'Off'), 'A PIN in front of this one chat, checked in Postgres.')));
+
+  wrap.append(h('section', {},
+    h('h3', {}, 'Housekeeping'),
+    h('div', { class: 'row-btns' },
+      h('button', { class: 'btn small', onclick: exportChat }, 'Export conversation'),
+      h('button', { class: 'btn small', onclick: openDigest }, 'Catch me up'),
+      h('button', { class: 'btn small danger', onclick: clearHistory }, 'Clear history'))));
 
   openSide(wrap);
 }
@@ -204,8 +451,7 @@ export async function sharedMedia() {
     }
   });
   openSide(h('div', {},
-    h('div', { class: 'side-head' }, h('h3', { class: 'display' }, 'Shared media'),
-      h('button', { class: 'btn small ghost', onclick: openChatInfo }, 'Back')),
+    sideHead('Shared media', openChatInfo, 'Back'),
     h('section', {}, grid), h('section', {}, docs),
     !rows.length && h('p', { class: 'hint' }, 'Nothing shared yet.')));
 }
@@ -230,7 +476,7 @@ export async function exportChat() {
   } catch (e) { oops(e); }
 }
 
-/* ── catch me up ───────────────────────────────────────────────────────── */
+/* ── catch me up ───────────────────────────────────────────────── */
 export async function openDigest(hours = 12) {
   try {
     const d = await rpc('chat_digest', { p_chat: S.chat.chat_id, p_hours: hours });
@@ -259,7 +505,7 @@ export async function openDigest(hours = 12) {
   } catch (e) { oops(e); }
 }
 
-/* ── list-pane views ───────────────────────────────────────────────────── */
+/* ── list-pane views ──────────────────────────────────────────────── */
 export async function viewPeople() {
   const body = clear($('#list-body'));
   $('#list-title').textContent = 'People';
@@ -270,7 +516,7 @@ export async function viewPeople() {
   const favs = people.filter(p => p.favorite);
   const draw = (title, rows) => {
     if (!rows.length) return;
-    body.append(h('div', { class: 'day-sep', style: { justifySelf: 'start', margin: '10px 16px' } }, title));
+    body.append(h('div', { class: 'list-sep' }, title));
     rows.forEach(p => body.append(personRow(p)));
   };
   draw('Favourites', favs);
@@ -278,13 +524,29 @@ export async function viewPeople() {
   if (!people.length) body.append(h('div', { class: 'empty' }, h('p', {}, 'No contacts yet'),
     h('p', { class: 'hint' }, 'Search above by name or email to find someone.')));
 }
+
 export function personRow(p) {
-  return h('button', {
-    class: 'row', onclick: async () => (await import('./chats.js')).startDm(p.id),
+  const row = h('button', {
+    class: 'row',
+    onclick: async () => {
+      if (row.dataset.pressed) { delete row.dataset.pressed; return; }
+      (await import('./chats.js')).startDm(p.id);
+    },
+    oncontextmenu: e => { e.preventDefault(); personMenu(p, { x: e.clientX, y: e.clientY }); },
   }, p.photo_url ? h('img', { class: 'av', src: p.photo_url }) : h('div', { class: 'av' }, initials(p.display_name)),
-    h('div', { class: 'row-main' }, h('div', { class: 'row-top' }, h('span', { class: 'row-name' }, p.display_name)),
+    h('div', { class: 'row-main' }, h('div', { class: 'row-top' }, h('span', { class: 'row-name' }, p.nickname || p.display_name)),
       h('div', { class: 'row-prev' }, p.about || lastSeenText(p) || '')),
     h('div', { class: 'row-side' }, p.favorite ? '★' : '', p.blocked ? '⛔' : ''));
+  longPress(row, at => personMenu(p, at));
+  return row;
+}
+
+function personMenu(p, at) {
+  popMenu([
+    { label: 'View profile', icon: 'person', onclick: () => openProfileCard(p.id) },
+    { label: 'Message', icon: 'chat', onclick: async () => (await import('./chats.js')).startDm(p.id) },
+    p.photo_url && { label: 'View photo', icon: 'image', onclick: () => openPhotoViewer(p.photo_url, p.display_name) },
+  ], { ...at, title: p.nickname || p.display_name });
 }
 
 export async function viewCalls() {
@@ -292,13 +554,14 @@ export async function viewCalls() {
   $('#list-title').textContent = 'Calls';
   clear($('#folders'));
   const rows = await (await import('./calls.js')).callHistory();
-  if (!rows.length) return void body.append(h('div', { class: 'empty' }, h('p', {}, 'No calls yet')));
+  if (!rows.length) return void body.append(h('div', { class: 'empty' }, h('p', {}, 'No calls yet'),
+    h('p', { class: 'hint' }, 'Voice and video calls you make show up here.')));
   rows.forEach(r => {
     const out = r.caller_id === S.me.id;
     const label = { missed: 'Missed', declined: 'Declined', ended: out ? 'Outgoing' : 'Incoming', accepted: 'In progress', ringing: 'Ringing', failed: 'Failed' }[r.state];
     body.append(h('button', {
-      class: 'row', onclick: async () => { const chats = S.chats.find(c => c.chat_id === r.chat_id); if (chats) (await import('./chats.js')).openChat(r.chat_id); },
-    }, h('div', { class: 'av' }, r.kind === 'video' ? '🎥' : '📞'),
+      class: 'row', onclick: async () => { const hit = S.chats.find(c => c.chat_id === r.chat_id); if (hit) (await import('./chats.js')).openChat(r.chat_id); },
+    }, h('div', { class: 'av' }, iconEl(r.kind === 'video' ? 'video' : 'call', 19)),
       h('div', { class: 'row-main' },
         h('div', { class: 'row-top' }, h('span', { class: 'row-name' }, r.chats?.name || (out ? 'Outgoing call' : 'Incoming call'))),
         h('div', { class: 'row-prev', style: r.state === 'missed' ? { color: 'var(--danger)' } : {} },
@@ -307,72 +570,75 @@ export async function viewCalls() {
   });
 }
 
-export async function viewSaved() {
-  const body = clear($('#list-body'));
+/* Starred, read-later and scheduled all answer "things I set aside", so they
+   are one view with three tabs instead of two entries in the tab bar. */
+export async function viewSaved(tab = 'starred') {
   $('#list-title').textContent = 'Saved';
-  clear($('#folders'));
-  const [stars, marks] = await Promise.all([
-    sb.from('stars').select('message_id, messages(*, chats(name, type))').eq('user_id', S.me.id),
-    sb.from('bookmarks').select('message_id, note, created_at, messages(*, chats(name, type))').eq('user_id', S.me.id),
-  ]);
-  const section = (title, rows, noteKey) => {
-    body.append(h('div', { class: 'day-sep', style: { justifySelf: 'start', margin: '10px 16px' } }, title));
-    if (!rows?.length) return body.append(h('p', { class: 'hint', style: { padding: '0 16px 10px' } }, 'Nothing here yet.'));
-    rows.forEach(r => {
-      const m = r.messages; if (!m) return;
-      body.append(h('button', {
-        class: 'result', onclick: async () => {
-          const { openChat } = await import('./chats.js');
-          await openChat(m.chat_id);
-          setTimeout(() => jumpTo(m.id), 400);
-        },
-      }, h('b', {}, m.chats?.name || 'Chat'),
-        h('span', {}, (m.body || `[${m.kind}]`).slice(0, 140)),
-        h('small', {}, [nameOf(m.sender_id), shortWhen(m.created_at), r[noteKey]].filter(Boolean).join(' · '))));
-    });
-  };
-  section('Starred', stars.data, null);
-  section('Read later', marks.data, 'note');
+  const chips = clear($('#folders'));
+  [['starred', 'Starred'], ['later', 'Read later'], ['scheduled', 'Scheduled']].forEach(([k, l]) =>
+    chips.append(h('button', { class: 'chip' + (tab === k ? ' is-on' : ''), onclick: () => viewSaved(k) }, l)));
+  const body = clear($('#list-body'));
+  if (tab === 'scheduled') return renderScheduled(body);
+
+  const q = tab === 'starred'
+    ? sb.from('stars').select('message_id, messages(*, chats(name, type))').eq('user_id', S.me.id)
+    : sb.from('bookmarks').select('message_id, note, created_at, messages(*, chats(name, type))').eq('user_id', S.me.id);
+  const { data, error } = await q;
+  if (error) return oops(error);
+  if (!data?.length) return void body.append(h('div', { class: 'empty' },
+    h('p', {}, tab === 'starred' ? 'Nothing starred' : 'Nothing saved for later'),
+    h('p', { class: 'hint' }, 'Hover a message and use the star or the bookmark.')));
+  data.forEach(r => {
+    const m = r.messages; if (!m) return;
+    body.append(h('button', {
+      class: 'result', onclick: async () => {
+        const { openChat } = await import('./chats.js');
+        await openChat(m.chat_id);
+        setTimeout(() => jumpTo(m.id), 400);
+      },
+    }, h('b', {}, m.chats?.name || 'Chat'),
+      h('span', {}, (m.body || `[${m.kind}]`).slice(0, 140)),
+      h('small', {}, [nameOf(m.sender_id), shortWhen(m.created_at), r.note].filter(Boolean).join(' · '))));
+  });
 }
 
-export async function viewScheduled() {
-  const body = clear($('#list-body'));
-  $('#list-title').textContent = 'Scheduled';
-  clear($('#folders'));
+async function renderScheduled(body) {
   const rows = await sb.from('scheduled_messages').select('*, chats(name)').eq('sender_id', S.me.id).order('send_at');
   const pend = (rows.data || []).filter(r => r.status === 'pending');
   if (!pend.length) body.append(h('div', { class: 'empty' }, h('p', {}, 'Nothing queued'),
-    h('p', { class: 'hint' }, 'Use the clock in the composer to schedule a message.')));
+    h('p', { class: 'hint' }, 'Attach menu → Schedule this message.')));
   pend.forEach(r => body.append(h('div', { class: 'result' },
     h('b', {}, r.chats?.name || 'Chat'),
     h('span', {}, (r.body || '').slice(0, 140)),
     h('small', {}, `${new Date(r.send_at).toLocaleString()}${r.recurrence ? ' · repeats ' + r.recurrence : ''}`),
-    h('div', { style: { display: 'flex', gap: '6px', marginTop: '4px' } },
+    h('div', { class: 'row-btns' },
       h('button', {
         class: 'btn small', onclick: async () => {
           const v = await promptBox('Edit scheduled message', { value: r.body || '' });
-          if (v !== null) { await upd('scheduled_messages', { body: v }, { id: r.id }); viewScheduled(); }
+          if (v !== null) { await upd('scheduled_messages', { body: v }, { id: r.id }); viewSaved('scheduled'); }
         },
       }, 'Edit'),
       h('button', {
         class: 'btn small', onclick: async () => {
           const when = await promptBox('Send at', { value: new Date(r.send_at).toISOString().slice(0, 16), type: 'datetime-local' });
-          if (when) { await upd('scheduled_messages', { send_at: new Date(when).toISOString() }, { id: r.id }); viewScheduled(); }
+          if (when) { await upd('scheduled_messages', { send_at: new Date(when).toISOString() }, { id: r.id }); viewSaved('scheduled'); }
         },
       }, 'Reschedule'),
       h('button', {
-        class: 'btn small danger', onclick: async () => { await upd('scheduled_messages', { status: 'cancelled' }, { id: r.id }); viewScheduled(); },
+        class: 'btn small danger', onclick: async () => { await upd('scheduled_messages', { status: 'cancelled' }, { id: r.id }); viewSaved('scheduled'); },
       }, 'Cancel')))));
   const seen = (rows.data || []).filter(r => r.status !== 'pending');
   if (seen.length) {
-    body.append(h('div', { class: 'day-sep', style: { justifySelf: 'start', margin: '10px 16px' } }, 'History'));
+    body.append(h('div', { class: 'list-sep' }, 'History'));
     seen.slice(0, 20).forEach(r => body.append(h('div', { class: 'result' },
       h('b', {}, r.chats?.name || 'Chat'), h('span', {}, (r.body || '').slice(0, 100)),
       h('small', {}, `${r.status} · ${shortWhen(r.send_at)}`))));
   }
 }
 
-/* ── search across everything ──────────────────────────────────────────── */
+export const viewScheduled = () => viewSaved('scheduled');
+
+/* ── search across everything ───────────────────────────────────────── */
 export const runSearch = debounce(async q => {
   const { renderChatList } = await import('./chats.js');
   const body = $('#list-body');
@@ -385,10 +651,10 @@ export const runSearch = debounce(async q => {
       rpc('search_people', { p_query: q }),
     ]);
     if (people.length) {
-      body.append(h('div', { class: 'day-sep', style: { justifySelf: 'start', margin: '10px 16px' } }, 'People'));
+      body.append(h('div', { class: 'list-sep' }, 'People'));
       people.forEach(p => body.append(personRow(p)));
     }
-    body.append(h('div', { class: 'day-sep', style: { justifySelf: 'start', margin: '10px 16px' } }, `Messages (${msgs.length})`));
+    body.append(h('div', { class: 'list-sep' }, `Messages (${msgs.length})`));
     if (!msgs.length) body.append(h('p', { class: 'hint', style: { padding: '0 16px' } }, 'No message matches. Encrypted chats are not searchable server-side.'));
     msgs.forEach(m => {
       const hl = (m.body || '').replace(new RegExp(`(${q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'ig'), '<mark>$1</mark>');
