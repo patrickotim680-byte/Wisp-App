@@ -1,0 +1,435 @@
+/* ==========================================================================
+   Wisp — second layer.
+
+   Loaded after styles.css on purpose, the same way call.css is: styles.css is
+   the design system and stays the design system. Everything here is a piece of
+   chrome that got rebuilt — the composer, the tab bar's glyphs, the voice-note
+   transport, swipe-to-reply, the reorganised Settings panel and the wallpaper
+   picker — kept together so it is obvious what changed and what didn't.
+
+   No new colour is invented anywhere below. Every value resolves through the
+   tokens already in styles.css, which is why all of this still follows the
+   account accent, the per-chat accent, density, text scale and dark mode
+   without a single extra line of JavaScript.
+   ========================================================================== */
+
+/* ══ 1. the composer ═══════════════════════════════════════════════════════
+   One long, thin pill. The old bar put the attach button outside the field, so
+   on a narrow phone the writing area was a stub in the middle of a row of
+   controls; everything that belongs to *composing* now lives inside the pill
+   and only send/record sits outside it. The pill is the full width of the
+   column, its height is animated rather than snapped, and the whole bar is
+   lifted by the keyboard inset (--kb, published by trackKeyboard()) on top of
+   the home-indicator inset, so it sits exactly on the keyboard on iOS instead
+   of behind it. */
+
+.composer {
+  padding: 8px clamp(8px, 2.4vw, 16px) calc(9px + var(--kb, 0px));
+  gap: 7px;
+  border-top: 1px solid color-mix(in oklab, var(--line) 60%, transparent);
+  background: color-mix(in oklab, var(--surface) 82%, transparent);
+  backdrop-filter: blur(26px) saturate(180%);
+  -webkit-backdrop-filter: blur(26px) saturate(180%);
+  transition: padding-bottom 0.24s var(--ease);
+}
+.composer > * { width: 100%; max-width: 860px; margin-inline: auto; }
+
+.composer-main {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+/* The pill. `align-items:flex-end` above keeps the trailing button pinned to
+   the last line as the field grows, which is the detail that stops the send
+   button from drifting to the vertical middle of a four-line message. */
+.input-shell {
+  flex: 1 1 auto;
+  min-width: 0;
+  position: relative;
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  padding: 3px 3px 3px 4px;
+  border-radius: 23px;
+  background: var(--sunken);
+  border: 1px solid color-mix(in oklab, var(--line) 55%, transparent);
+  box-shadow: inset 0 1px 0 color-mix(in oklab, white 26%, transparent);
+  transition: border-color 0.2s var(--ease), box-shadow 0.24s var(--ease), border-radius 0.24s var(--ease);
+}
+[data-theme="dark"] .input-shell { box-shadow: inset 0 1px 0 color-mix(in oklab, white 5%, transparent); }
+.input-shell:focus-within {
+  border-color: color-mix(in oklab, var(--accent) 55%, var(--line));
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--accent) 13%, transparent),
+              inset 0 1px 0 color-mix(in oklab, white 26%, transparent);
+}
+/* Squares off a touch once it is a paragraph rather than a line — a 23px
+   radius on a five-line block reads as a lozenge, not a field. */
+.input-shell.is-tall { border-radius: 17px; }
+
+#input {
+  flex: 1 1 auto;
+  min-width: 0;
+  width: auto;
+  border: none;
+  background: none;
+  box-shadow: none;
+  resize: none;
+  overflow-y: auto;
+  overflow-x: hidden;
+  /* Thin: one line is 20px of text in a 38px pill. Everything else scales off
+     --scale, so this respects the account text size too. */
+  font-size: calc(15px * var(--scale));
+  line-height: calc(20px * var(--scale));
+  min-height: calc(20px * var(--scale));
+  max-height: calc(124px * var(--scale));
+  padding: 9px 4px 9px 8px;
+  scrollbar-width: thin;
+  /* height is set in JS from a measured mirror; transitioning it here is what
+     makes growing to a second line a slide rather than a jump */
+  transition: height 0.16s var(--ease);
+}
+#input:focus { border: none; box-shadow: none; outline: none; }
+#input::placeholder { color: var(--ink-3); }
+#input::-webkit-scrollbar { width: 4px; }
+#input::-webkit-scrollbar-thumb { background: var(--line); border-radius: 4px; }
+[data-motion="reduce"] #input { transition: none; }
+
+/* In-pill controls: 34px targets that still hit the 44px minimum once the
+   pill's own padding is counted. */
+.input-shell .icon-btn {
+  width: 34px; height: 34px; flex: none;
+  border-radius: 50%;
+  color: var(--ink-3);
+}
+.input-shell .icon-btn:hover { background: color-mix(in oklab, var(--ink) 7%, transparent); color: var(--ink-2); }
+#btn-attach { transition: transform 0.34s var(--ease), color 0.2s var(--ease); }
+#btn-attach.is-open { transform: rotate(45deg); color: var(--accent-strong); }
+
+/* The one trailing button. 42px, circular, accent — and it swaps between mic
+   and send with a cross-fade rather than a display flip, so the bar never
+   jitters as you type the first character. */
+.composer-main .trail {
+  position: relative;
+  width: 42px; height: 42px; flex: none;
+  margin-bottom: 1px;
+}
+.composer-main .trail > .icon-btn {
+  position: absolute; inset: 0; display: grid;
+  width: 42px; height: 42px;
+  box-shadow: 0 2px 10px -3px color-mix(in oklab, var(--accent) 55%, transparent);
+  transition: transform 0.22s var(--ease), opacity 0.16s var(--ease), background 0.2s var(--ease);
+}
+.composer-main #btn-send { opacity: 0; transform: scale(0.7) rotate(-12deg); pointer-events: none; }
+.composer-main #btn-mic { opacity: 1; transform: none; }
+.composer-main.has-draft #btn-send { opacity: 1; transform: none; pointer-events: auto; }
+.composer-main.has-draft #btn-mic { opacity: 0; transform: scale(0.7); pointer-events: none; }
+
+.reply-chip, .attach-row {
+  border-radius: 16px;
+  border: 1px solid color-mix(in oklab, var(--line) 55%, transparent);
+  animation: chip-in 0.2s var(--ease);
+}
+@keyframes chip-in { from { opacity: 0; transform: translateY(5px) } }
+.reply-chip {
+  position: relative; padding-left: 14px;
+  border-left: 3px solid var(--accent);
+  border-radius: 6px 16px 16px 6px;
+}
+.reply-chip span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Recording strip: same pill language as the composer it replaces. */
+.rec-strip {
+  border-radius: 21px;
+  background: color-mix(in oklab, var(--danger) 8%, var(--sunken));
+  border: 1px solid color-mix(in oklab, var(--danger) 22%, transparent);
+  padding: 6px 10px;
+}
+.rec-strip canvas { height: 28px; }
+.rec-strip #rec-time { font-variant-numeric: tabular-nums; font-weight: 600; font-size: 0.85em; flex: none; }
+
+/* ══ 2. the tab bar ════════════════════════════════════════════════════════
+   The glyphs were 20px outlines that all read the same weight, on or off. They
+   are now purpose-drawn: outline when idle, solid when selected, at 23px —
+   which is the whole reason a native tab bar is legible at a glance. Swapping
+   the artwork rather than just tinting it is what carries the state. */
+
+.rail { padding-top: 4px; }
+.rail-btn { padding: 6px 2px 5px; gap: 3px; }
+.rail-btn .rail-glyph {
+  position: relative; display: grid; place-items: center; width: 23px; height: 23px;
+  transition: transform 0.3s var(--ease);
+}
+.rail-btn .rail-glyph > svg {
+  position: absolute; width: 23px; height: 23px;
+  transition: transform 0.3s var(--ease), opacity 0.2s var(--ease);
+}
+.rail-btn .rail-glyph > .glyph-on { opacity: 0; transform: scale(0.82); }
+.rail-btn .rail-glyph > .glyph-off { opacity: 1; }
+.rail-btn.is-on .rail-glyph > .glyph-on { opacity: 1; transform: none; }
+.rail-btn.is-on .rail-glyph > .glyph-off { opacity: 0; transform: scale(1.12); }
+.rail-btn.is-on { color: var(--accent-strong); }
+.rail-btn.is-on .rail-label { font-weight: 680; letter-spacing: 0.002em; }
+.rail-btn:not(.is-on):hover { color: var(--ink-2); }
+.rail-btn:not(.is-on):hover .rail-glyph { transform: translateY(-1px); }
+
+/* A settle rather than a slide: the indicator overshoots by a hair and comes
+   back, which is what makes the bar feel physical. */
+.rail-glow {
+  background: linear-gradient(180deg,
+    color-mix(in oklab, var(--accent-quiet) 92%, transparent),
+    color-mix(in oklab, var(--accent-quiet) 66%, transparent));
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--accent-line) 58%, transparent),
+              inset 0 1px 0 color-mix(in oklab, white 30%, transparent);
+  transition: transform 0.42s cubic-bezier(0.34, 1.42, 0.44, 1);
+}
+[data-theme="dark"] .rail-glow { box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--accent-line) 46%, transparent); }
+[data-motion="reduce"] .rail-glow { transition: transform 0.01s linear; }
+.badge { box-shadow: 0 0 0 2.5px color-mix(in oklab, var(--surface) 92%, transparent); }
+
+/* The header/list icon buttons get the same optical treatment. */
+.list-actions .icon-btn svg, .conv-tools .icon-btn svg { width: 21px; height: 21px; }
+
+/* ══ 3. voice notes ════════════════════════════════════════════════════════ */
+.voice.vn {
+  display: flex; align-items: center; gap: 10px;
+  min-width: min(268px, 62vw); padding: 2px 0;
+}
+.vn-play {
+  position: relative;
+  width: 34px; height: 34px; flex: none; border: none; cursor: pointer;
+  border-radius: 50%; display: grid; place-items: center;
+  background: color-mix(in oklab, currentColor 15%, transparent);
+  color: inherit;
+  transition: background 0.16s var(--ease), transform 0.14s var(--ease);
+}
+.vn-play:hover { background: color-mix(in oklab, currentColor 24%, transparent); }
+.vn-play:active { transform: scale(0.92); }
+.vn-play svg { fill: currentColor; stroke: none; }
+.vn-play.is-playing { background: color-mix(in oklab, currentColor 28%, transparent); }
+
+/* The scrubber is the waveform. A padded hit area means a thumb can grab it
+   without pixel-hunting. */
+.vn-scrub {
+  position: relative; flex: 1 1 auto; min-width: 0; height: 30px;
+  cursor: pointer; touch-action: none;
+}
+.vn-scrub::after { content: ""; position: absolute; inset: -8px -4px; }
+.vn-wave { width: 100%; height: 30px; display: block; pointer-events: none; }
+.vn-head {
+  position: absolute; top: 50%; left: 0; width: 11px; height: 11px; margin-left: -5.5px;
+  border-radius: 50%; background: currentColor; transform: translateY(-50%);
+  box-shadow: 0 0 0 3px color-mix(in oklab, currentColor 22%, transparent);
+  opacity: 0; transition: opacity 0.16s var(--ease); pointer-events: none;
+}
+.vn-meta { display: grid; gap: 2px; justify-items: end; flex: none; }
+.vn-time { font-size: 0.72em; opacity: 0.75; font-variant-numeric: tabular-nums; letter-spacing: -0.01em; }
+.vn-rate {
+  font-size: 0.68em; font-weight: 650; line-height: 1;
+  border: 1px solid color-mix(in oklab, currentColor 40%, transparent);
+  border-radius: 999px; padding: 2px 6px; background: none; cursor: pointer;
+  color: inherit; opacity: 0.8;
+}
+.vn-rate:hover { opacity: 1; background: color-mix(in oklab, currentColor 12%, transparent); }
+/* An unheard note gets a dot, and loses it once you have played it through. */
+.voice.vn:not(.is-played) .vn-play::after {
+  content: ""; position: absolute; top: 1px; right: 1px; width: 7px; height: 7px;
+  border-radius: 50%; background: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in oklab, var(--surface) 85%, transparent);
+}
+.out .voice.vn:not(.is-played) .vn-play::after { background: currentColor; opacity: 0.9; box-shadow: none; }
+.vn-transcript { margin-top: 5px; font-style: italic; }
+
+/* ══ 4. swipe to reply ═════════════════════════════════════════════════════ */
+.msg {
+  /* Hands the horizontal axis to the gesture and keeps the vertical one for the
+     scroller, which is what stops the two from fighting. */
+  touch-action: pan-y;
+}
+.msg.is-swiping { transition: none; will-change: transform; }
+.msg.swipe-back { transition: transform 0.24s cubic-bezier(0.2, 1.3, 0.4, 1); }
+.swipe-cue {
+  position: absolute; top: 50%; left: -40px;
+  width: 30px; height: 30px; border-radius: 50%;
+  display: grid; place-items: center;
+  background: var(--sunken); color: var(--ink-3);
+  border: 1px solid var(--line-soft);
+  transform: translateY(-50%) scale(0.62); opacity: 0;
+  transition: background 0.14s var(--ease), color 0.14s var(--ease), border-color 0.14s var(--ease);
+  pointer-events: none;
+}
+.swipe-cue.is-armed {
+  background: var(--accent); color: var(--on-accent); border-color: transparent;
+  box-shadow: 0 3px 12px -4px color-mix(in oklab, var(--accent) 70%, transparent);
+}
+.out .swipe-cue { left: auto; right: calc(100% + 10px); }
+
+/* ══ 5. bubbles over a dark wallpaper ══════════════════════════════════════
+   A dark wallpaper under a light theme used to leave near-black text on a
+   near-black backdrop. data-wall is set by applyChatStyle() from the preset's
+   own tone, so the fix is one rule rather than a second theme. */
+[data-wall="dark"][data-theme="light"] .in .bub {
+  background: color-mix(in oklab, var(--surface) 94%, transparent);
+  border-color: color-mix(in oklab, white 16%, transparent);
+  box-shadow: 0 2px 10px -4px oklch(0 0 0 / 0.4);
+}
+[data-wall="dark"][data-theme="light"] .day-sep,
+[data-wall="dark"][data-theme="light"] .sys {
+  background: oklch(0.22 0.01 var(--hue-n) / 0.6); color: oklch(0.96 0 0); border-color: transparent;
+}
+[data-wall="light"][data-theme="dark"] .in .bub {
+  background: color-mix(in oklab, var(--surface) 96%, white 4%);
+  color: oklch(0.2 0.01 var(--hue-n));
+}
+[data-wall="light"][data-theme="dark"] .in .bub .hint,
+[data-wall="light"][data-theme="dark"] .in .bub .muted { color: oklch(0.42 0.01 var(--hue-n)); }
+
+/* ══ 6. Settings ═══════════════════════════════════════════════════════════
+   It was one long scroll of every control the app has. It becomes a short index
+   of destinations, each one a page with only its own controls on it — so the
+   thing you came for is two taps away instead of somewhere in a wall. */
+
+.set-search { position: relative; margin-bottom: 4px; }
+.set-search input { width: 100%; padding-left: 36px; background: var(--sunken); border-color: transparent; border-radius: 12px; }
+.set-search svg { position: absolute; left: 11px; top: 11px; color: var(--ink-3); pointer-events: none; }
+
+.set-group { display: grid; gap: 2px; padding: 6px 0; }
+.set-group > h4 {
+  font-size: 0.7em; font-weight: 680; letter-spacing: 0.07em; text-transform: uppercase;
+  color: var(--ink-3); padding: 12px 4px 5px;
+}
+.set-row {
+  display: grid; grid-template-columns: 34px 1fr auto; align-items: center; gap: 12px;
+  width: 100%; border: none; background: none; cursor: pointer; color: inherit;
+  padding: 10px 8px; border-radius: 14px; text-align: left;
+  transition: background 0.14s var(--ease);
+}
+.set-row:hover { background: var(--sunken); }
+.set-row:active { background: var(--accent-quiet); }
+.set-tile {
+  width: 34px; height: 34px; border-radius: 11px; display: grid; place-items: center;
+  background: color-mix(in oklab, var(--accent-quiet) 78%, transparent);
+  color: var(--accent-strong);
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--accent-line) 42%, transparent);
+}
+.set-main { min-width: 0; display: grid; gap: 1px; }
+.set-main b { font-weight: 560; letter-spacing: -0.006em; }
+.set-main small { color: var(--ink-3); font-size: 0.8em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.set-row > .set-end { display: flex; align-items: center; gap: 7px; color: var(--ink-3); font-size: 0.82em; }
+.set-row > .set-end svg { color: var(--ink-3); opacity: 0.7; }
+.set-row.is-danger .set-tile { background: color-mix(in oklab, var(--danger) 12%, transparent); color: var(--danger); box-shadow: none; }
+.set-row.is-danger .set-main b { color: var(--danger); }
+
+/* A sub-page keeps its title and its way back pinned while you scroll it. */
+.set-page { display: grid; gap: 4px; }
+.set-page > .side-head {
+  position: sticky; top: -18px; z-index: 3; margin: -18px -18px 0; padding: 16px 18px 12px;
+  background: color-mix(in oklab, var(--surface) 92%, transparent);
+  backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px);
+  border-bottom: 1px solid var(--line-soft);
+}
+.set-page > .side-head .display { font-size: calc(1.18rem * var(--scale)); }
+.set-back { display: inline-flex; align-items: center; gap: 4px; }
+.set-note { color: var(--ink-3); font-size: 0.84em; line-height: 1.5; }
+.set-empty { padding: 26px 6px; color: var(--ink-3); text-align: center; }
+
+/* ══ 7. the wallpaper picker ═══════════════════════════════════════════════
+   Thirty-five presets is too many for one flat grid, so they are grouped and
+   the groups are tabs. The tile previews render the *real* wallpaper — same
+   code path as the thread — including its dark-mode twin, so what you see in
+   the picker is what the chat gets. */
+.wall-tabs { display: flex; gap: 6px; overflow-x: auto; padding: 2px 0 8px; scrollbar-width: none; }
+.wall-tabs::-webkit-scrollbar { display: none; }
+.wall-grid { grid-template-columns: repeat(auto-fill, minmax(70px, 1fr)); gap: 10px; }
+.wall-tile { position: relative; }
+.wall-tile > .wall {
+  aspect-ratio: 9 / 15;
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--ink) 8%, transparent),
+              inset 0 -18px 26px -22px oklch(0.2 0.02 var(--hue-n) / 0.55);
+  transition: transform 0.18s var(--ease), outline-color 0.15s var(--ease);
+}
+.wall-tile:hover > .wall { transform: translateY(-2px) scale(1.02); }
+.wall-tile.is-on > .wall { outline: 2.5px solid var(--accent); outline-offset: 2px; }
+.wall-check {
+  position: absolute; right: 4px; top: 4px; width: 18px; height: 18px; border-radius: 50%;
+  background: var(--accent); color: var(--on-accent); display: grid; place-items: center;
+  box-shadow: 0 1px 4px oklch(0 0 0 / 0.3);
+}
+.wall-tile:not(.is-on) .wall-check { display: none; }
+
+/* Typeface picker: every option previews in its own face, which is the only
+   way to choose one. */
+.font-grid { display: grid; gap: 8px; }
+.font-opt {
+  display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 10px;
+  border: 1px solid var(--line); background: var(--surface); border-radius: 14px;
+  padding: 11px 13px; cursor: pointer; text-align: left; color: inherit; width: 100%;
+  transition: border-color 0.15s var(--ease), background 0.15s var(--ease);
+}
+.font-opt:hover { background: var(--sunken); }
+.font-opt.is-on { border-color: var(--accent); background: var(--accent-quiet); }
+.font-opt .fo-name { font-size: 1.04em; font-weight: 600; letter-spacing: -0.01em; }
+.font-opt .fo-sample { font-size: 0.9em; color: var(--ink-2); }
+.font-opt .fo-note { font-size: 0.76em; color: var(--ink-3); }
+.font-opt .fo-mark { color: var(--accent-strong); opacity: 0; }
+.font-opt.is-on .fo-mark { opacity: 1; }
+
+/* ══ 8. calls: the denoise control and its readout ═════════════════════════ */
+.call-bar #call-denoise.is-live { background: var(--accent); color: var(--on-accent); --glyph-cut: var(--accent); }
+.call-bar #call-denoise.off { background: oklch(0.9 0.01 var(--hue-n)); color: oklch(0.2 0 0); }
+.dn-flag {
+  position: absolute; left: 50%; transform: translateX(-50%);
+  bottom: calc(96px + env(safe-area-inset-bottom, 0px)); z-index: 5;
+  display: none; align-items: center; gap: 7px;
+  padding: 5px 12px; border-radius: 999px; font-size: 0.74em; font-weight: 600;
+  background: oklch(0.2 0.01 var(--hue-n) / 0.6); color: oklch(0.97 0 0);
+  backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+}
+.call.connected .dn-flag.is-shown { display: flex; }
+.dn-flag i {
+  width: 6px; height: 6px; border-radius: 50%; background: var(--good); display: block;
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--good) 26%, transparent);
+}
+.dn-flag.is-busy i { background: oklch(0.75 0.16 78); box-shadow: 0 0 0 3px oklch(0.75 0.16 78 / 0.26); }
+
+/* The mic test in Settings. A meter that shows the measured floor, the word for
+   it, and what the suppressor is doing about it right now. */
+.mic-test { display: grid; gap: 8px; padding: 12px; border: 1px solid var(--line); border-radius: 16px; background: var(--sunken); }
+.mic-bar { height: 9px; border-radius: 999px; background: color-mix(in oklab, var(--ink) 10%, transparent); overflow: hidden; position: relative; }
+.mic-bar i { display: block; height: 100%; width: 0%; border-radius: 999px; background: linear-gradient(90deg, var(--good), var(--accent)); transition: width 0.08s linear; }
+.mic-read { display: flex; justify-content: space-between; gap: 10px; font-size: 0.82em; }
+.mic-read b { font-variant-numeric: tabular-nums; }
+.mic-verdict { font-weight: 600; }
+.mic-verdict[data-state="quiet"] { color: var(--good); }
+.mic-verdict[data-state="noisy"] { color: oklch(0.62 0.15 78); }
+.mic-verdict[data-state="loud"] { color: var(--danger); }
+
+/* ══ 9. security rows ══════════════════════════════════════════════════════ */
+.bio-row { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 11px; font-size: 0.9em; padding: 4px 0; }
+.bio-row .bio-ico { width: 32px; height: 32px; border-radius: 10px; display: grid; place-items: center; background: var(--sunken); color: var(--ink-2); }
+.bio-tier {
+  font-size: 0.7em; font-weight: 650; letter-spacing: 0.04em; text-transform: uppercase;
+  padding: 2px 7px; border-radius: 999px;
+}
+.bio-tier[data-tier="prf"] { background: color-mix(in oklab, var(--good) 16%, transparent); color: oklch(0.42 0.12 155); }
+.bio-tier[data-tier="device"] { background: color-mix(in oklab, var(--ink) 9%, transparent); color: var(--ink-2); }
+[data-theme="dark"] .bio-tier[data-tier="prf"] { color: oklch(0.8 0.14 155); }
+
+/* ══ 10. narrow screens ════════════════════════════════════════════════════ */
+@media (max-width: 900px) {
+  .app.on-conv .composer { padding-bottom: calc(9px + var(--kb, 0px) + env(safe-area-inset-bottom, 0px)); }
+  /* Once the keyboard is up the home-indicator inset is not there any more —
+     keeping it would leave a visible gap between the bar and the keys. */
+  html.kb-open .app.on-conv .composer { padding-bottom: calc(9px + var(--kb, 0px)); }
+  .voice.vn { min-width: min(232px, 66vw); }
+}
+@media (max-width: 420px) {
+  .composer { padding-left: 7px; padding-right: 7px; }
+  .composer-main { gap: 6px; }
+  .wall-grid { grid-template-columns: repeat(auto-fill, minmax(64px, 1fr)); }
+}
+/* Very short viewports (a phone in landscape with the keyboard up): the field
+   must not be allowed to eat the thread. */
+@media (max-height: 480px) {
+  #input { max-height: calc(64px * var(--scale)); }
+}
