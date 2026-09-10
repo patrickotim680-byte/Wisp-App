@@ -1,10 +1,10 @@
 import { sb, rpc, sel, upd, del, ins, upload, publicUrl } from './db.js';
 import { S, person } from './state.js';
-import { $, h, clear, toast, oops, modal, closeModal, confirmBox, promptBox, initials, bytes, shortWhen, debounce } from './util.js';
-import { ACCENTS, FONTS, applySettings, saveSettings, toCustom, parseCustom, applyWallpaper } from './theme.js';
+import { $, h, clear, toast, oops, modal, closeModal, confirmBox, promptBox, initials, bytes, shortWhen, debounce, iconEl, avatarData } from './util.js';
+import { ACCENTS, FONTS, WALLPAPERS, applySettings, saveSettings, toCustom, parseCustom, applyWallpaper, paintWall } from './theme.js';
 import { signOut, signOutEverywhere } from './auth.js';
 import { compressImage } from './media.js';
-import { openSide } from './panels.js';
+import { openSide, openPhotoViewer } from './panels.js';
 
 const row = (label, control, note) => h('div', { class: 'kv' },
   h('div', {}, h('span', { style: { color: 'var(--ink)' } }, label), note && h('div', { class: 'hint' }, note)), control);
@@ -43,14 +43,14 @@ function slider(min, max, step, value, oninput, fmt = v => v) {
     type: 'range', min, max, step, value,
     oninput: e => { out.textContent = fmt(+e.target.value); oninput(+e.target.value); },
   });
-  return h('div', { style: { display: 'grid', gap: '4px', minWidth: '150px' } }, s, out);
+  return h('div', { class: 'range-cell' }, s, out);
 }
 function selectBox(options, value, onpick) {
   return h('select', { onchange: e => onpick(e.target.value) },
     options.map(([v, l]) => h('option', { value: v, selected: v === value }, l)));
 }
 
-/* ── the from-scratch OKLCH picker ─────────────────────────────────────── */
+/* ── the from-scratch OKLCH picker ──────────────────────────────────── */
 function colorPicker() {
   const cur = parseCustom(S.settings.custom_accent) || ACCENTS[S.settings.accent] || ACCENTS.clay;
   let { l, c, h: hue } = cur;
@@ -104,39 +104,52 @@ function filePick(accept, cb) {
   document.body.append(i); i.click(); setTimeout(() => i.remove(), 60000);
 }
 
-/* ── sections ──────────────────────────────────────────────────────────── */
-function profileSection() {
-  const s = S.me;
-  const avatar = h('div', { class: 'av', style: { width: '64px', height: '64px' } }, initials(s.display_name));
-  if (s.photo_url) clear(avatar).append(h('img', { src: s.photo_url, class: 'av', style: { width: '64px', height: '64px' } }));
-  return h('section', {},
-    h('h3', {}, 'Profile'),
-    h('div', { class: 'kv' }, avatar, h('button', {
-      class: 'btn small', onclick: () => filePick('image/*', async f => {
-        try {
-          const { blob } = await compressImage(f);
-          const path = `${S.me.id}/avatar.webp`;
-          await upload('avatars', path, blob, 'image/webp');
-          const url = publicUrl('avatars', path) + '?v=' + Date.now();
-          await upd('profiles', { photo_url: url }, { id: S.me.id });
-          S.me.photo_url = url; $('#me-avatar').src = url;
-          toast('Photo updated'); openSettings();
-        } catch (e) { oops(e); }
-      }),
-    }, 'Change photo')),
-    row('Display name', h('button', {
-      class: 'btn small', onclick: async () => {
-        const v = await promptBox('Display name', { value: S.me.display_name });
-        if (v) { await upd('profiles', { display_name: v }, { id: S.me.id }); S.me.display_name = v; openSettings(); }
-      },
-    }, S.me.display_name)),
-    row('About', h('button', {
-      class: 'btn small', onclick: async () => {
-        const v = await promptBox('About', { value: S.me.about || '' });
-        if (v !== null) { await upd('profiles', { about: v }, { id: S.me.id }); S.me.about = v; openSettings(); }
-      },
-    }, (S.me.about || '—').slice(0, 22))),
-    row('Email', h('small', { class: 'hint' }, S.me.email)));
+/* ── sections ───────────────────────────────────────────────────── */
+/* Your own face and name sit at the top, the way they do in every messenger
+   worth copying. It also means there is exactly one route to Settings — the
+   duplicate avatar button in the tab bar is gone. */
+function profileHero() {
+  const me = S.me;
+  const photo = me.photo_url || null;
+  return h('section', { class: 'info-hero' },
+    h('button', {
+      class: 'hero-face', title: photo ? 'View your photo' : 'Add a photo',
+      onclick: () => photo ? openPhotoViewer(photo, me.display_name) : changePhoto(),
+    }, h('img', { src: photo || avatarData(me.display_name), alt: '' }),
+      h('span', { class: 'hero-cam' }, iconEl('camera', 15))),
+    h('b', { class: 'display' }, me.display_name),
+    h('small', { class: 'hint' }, me.about || 'No about yet'),
+    h('small', { class: 'hint' }, me.email),
+    h('div', { class: 'hero-acts' },
+      h('button', { class: 'btn', onclick: changePhoto }, iconEl('camera', 17), 'Photo'),
+      h('button', {
+        class: 'btn', onclick: async () => {
+          const v = await promptBox('Display name', { value: S.me.display_name });
+          if (v) { await upd('profiles', { display_name: v }, { id: S.me.id }); S.me.display_name = v; openSettings(); }
+        },
+      }, iconEl('edit', 17), 'Name'),
+      h('button', {
+        class: 'btn', onclick: async () => {
+          const v = await promptBox('About', { value: S.me.about || '', note: 'A line about you. Visible per your privacy setting.' });
+          if (v !== null) { await upd('profiles', { about: v }, { id: S.me.id }); S.me.about = v; openSettings(); }
+        },
+      }, iconEl('info', 17), 'About')));
+}
+
+function changePhoto() {
+  filePick('image/*', async f => {
+    try {
+      const { blob } = await compressImage(f);
+      const path = `${S.me.id}/avatar.webp`;
+      await upload('avatars', path, blob, 'image/webp');
+      const url = publicUrl('avatars', path) + '?v=' + Date.now();
+      await upd('profiles', { photo_url: url }, { id: S.me.id });
+      S.me.photo_url = url;
+      const mini = $('#me-avatar');
+      if (mini) mini.src = url;
+      toast('Photo updated'); openSettings();
+    } catch (e) { oops(e); }
+  });
 }
 
 function appearanceSection() {
@@ -150,6 +163,24 @@ function appearanceSection() {
   const preview = h('div', {
     class: 'bub', style: { background: 'var(--accent)', color: 'var(--on-accent)', maxWidth: '70%', marginTop: '6px' },
   }, 'Live preview of your text size and bubble shape.');
+
+  const wallTile = (label, value) => {
+    const t = h('button', {
+      class: 'wall-tile' + ((s.wallpaper_url ?? null) === value ? ' is-on' : ''), title: label, type: 'button',
+      onclick: async () => { await saveSettings({ wallpaper_url: value }); openSettings(); },
+    }, h('span', { class: 'wall' }), h('small', {}, label));
+    paintWall(t.querySelector('.wall'), value, { dim: 0 });
+    return t;
+  };
+  const walls = h('div', { class: 'wall-grid' },
+    wallTile('None', null),
+    h('button', {
+      class: 'wall-tile is-add', type: 'button', title: 'Upload a photo',
+      onclick: () => filePick('image/*', f => uploadPublic('wallpapers', f, 'wallpaper_url')
+        .then(() => { applyWallpaper(); toast('Wallpaper set'); openSettings(); }).catch(oops)),
+    }, h('span', { class: 'wall wall-add' }, iconEl('image', 20)), h('small', {}, 'Photo')),
+    WALLPAPERS.map(w => wallTile(w.label, 'preset:' + w.id)));
+
   return h('section', {},
     h('h3', {}, 'Appearance'),
     row('Theme', segment([['light', 'Light'], ['dark', 'Dark'], ['system', 'System']], s.theme_mode, v => saveSettings({ theme_mode: v }))),
@@ -159,22 +190,11 @@ function appearanceSection() {
     row('Text size', slider(0.85, 1.4, 0.05, s.text_scale, v => saveSettings({ text_scale: v }), v => Math.round(v * 100) + '%')),
     row('Bubble corners', slider(2, 26, 1, s.bubble_radius, v => saveSettings({ bubble_radius: v }), v => v + 'px')),
     preview,
-    h('h3', { style: { marginTop: '8px' } }, 'Wallpaper'),
-    h('div', { class: 'swatches' },
-      ['', 'dune', 'grid', 'dots'].map(name => h('button', {
-        class: 'swatch', title: name || 'None',
-        style: { background: name ? `var(--accent-quiet)` : 'var(--sunken)', backgroundImage: builtinWall(name) },
-        onclick: async () => { await saveSettings({ wallpaper_url: name ? 'builtin:' + name : null }); applyWallpaper(); },
-      }))),
-    row('Custom image', h('button', { class: 'btn small', onclick: () => filePick('image/*', f => uploadPublic('wallpapers', f, 'wallpaper_url').then(() => { applyWallpaper(); toast('Wallpaper set'); })) }, 'Upload')),
+    h('h3', { style: { marginTop: '10px' } }, 'Default wallpaper'),
+    h('p', { class: 'hint' }, 'Used by every chat that has no wallpaper of its own. Set one per chat from its ⋮ menu → Theme & wallpaper.'),
+    walls,
     row('Wallpaper opacity', slider(0.15, 1, 0.05, s.wallpaper_opacity, v => saveSettings({ wallpaper_opacity: v }), v => Math.round(v * 100) + '%')),
     row('Wallpaper blur', slider(0, 14, 1, s.wallpaper_blur, v => saveSettings({ wallpaper_blur: v }), v => v + 'px')));
-}
-function builtinWall(name) {
-  if (name === 'dune') return 'repeating-linear-gradient(20deg, transparent 0 12px, oklch(0.6 0.05 70 / .18) 12px 14px)';
-  if (name === 'grid') return 'linear-gradient(oklch(0.5 0 0 / .12) 1px, transparent 1px), linear-gradient(90deg, oklch(0.5 0 0 / .12) 1px, transparent 1px)';
-  if (name === 'dots') return 'radial-gradient(oklch(0.5 0 0 / .18) 1px, transparent 1px)';
-  return 'none';
 }
 
 function accessibilitySection() {
@@ -191,7 +211,7 @@ function notificationsSection() {
   return h('section', {},
     h('h3', {}, 'Notifications'),
     row('Preview', selectBox([['full', 'Sender and message'], ['sender_only', 'Sender only'], ['hidden', 'Just “New message”']], s.notif_preview, v => saveSettings({ notif_preview: v }))),
-    row('Sound', h('div', { style: { display: 'flex', gap: '6px' } },
+    row('Sound', h('div', { class: 'row-btns' },
       selectBox([['chime', 'Chime'], ['knock', 'Knock'], ['pop', 'Pop'], ['none', 'Silent']], s.notif_sound, v => saveSettings({ notif_sound: v })),
       h('button', { class: 'btn small ghost', onclick: async () => (await import('./notify.js')).playSound() }, 'Test'))),
     row('Custom sound', h('button', { class: 'btn small', onclick: () => filePick('audio/*', f => uploadPublic('sounds', f, 'notif_sound').then(() => toast('Custom sound saved'))) }, 'Upload'),
@@ -207,7 +227,7 @@ function focusSection() {
     h('h3', {}, 'Focus'),
     row('Focus mode', toggle(s.focus_mode, v => { saveSettings({ focus_mode: v }); }),
       'App-wide quiet: no sounds, no notifications, unread counts stay.'),
-    row('Quiet hours', h('div', { style: { display: 'flex', gap: '6px' } },
+    row('Quiet hours', h('div', { class: 'row-btns' },
       h('input', { type: 'time', value: s.quiet_from || '', onchange: e => saveSettings({ quiet_from: e.target.value || null }) }),
       h('input', { type: 'time', value: s.quiet_to || '', onchange: e => saveSettings({ quiet_to: e.target.value || null }) }))));
 }
@@ -220,7 +240,7 @@ function privacySection() {
     row('Read receipts', toggle(s.read_receipts, v => saveSettings({ read_receipts: v })), 'Off means you stop sending them. You still see others.'),
     row('Last seen', selectBox(vis, s.last_seen_vis, v => saveSettings({ last_seen_vis: v }))),
     row('Online status', selectBox(vis, s.online_vis, v => saveSettings({ online_vis: v }))),
-    row('Profile photo', selectBox(vis, s.photo_vis, v => saveSettings({ photo_vis: v }))),
+    row('Profile photo', selectBox(vis, s.photo_vis, v => saveSettings({ photo_vis: v })), 'Who can open your picture full size.'),
     row('About', selectBox(vis, s.about_vis, v => saveSettings({ about_vis: v }))),
     row('Default disappearing', selectBox([[0, 'Off'], [3600, '1 hour'], [86400, '24 hours'], [604800, '7 days'], [7776000, '90 days']].map(([v, l]) => [String(v), l]), String(s.default_disappear), v => saveSettings({ default_disappear: +v })), 'Applied to new chats you start.'),
     row('Media size cap', slider(4, 200, 4, s.media_limit_mb, v => saveSettings({ media_limit_mb: v }), v => v + ' MB')),
@@ -274,17 +294,18 @@ async function securitySection() {
 function accountSection() {
   return h('section', {},
     h('h3', {}, 'Account'),
-    h('button', {
-      class: 'btn small', onclick: async () => {
-        try {
-          const data = await rpc('export_my_data');
-          const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-          const a = h('a', { href: URL.createObjectURL(blob), download: `wisp-export-${Date.now()}.json` });
-          document.body.append(a); a.click(); a.remove();
-        } catch (e) { oops(e); }
-      },
-    }, 'Export my data (JSON)'),
-    h('button', { class: 'btn small ghost', onclick: signOut }, 'Sign out'),
+    h('div', { class: 'row-btns' },
+      h('button', {
+        class: 'btn small', onclick: async () => {
+          try {
+            const data = await rpc('export_my_data');
+            const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+            const a = h('a', { href: URL.createObjectURL(blob), download: `wisp-export-${Date.now()}.json` });
+            document.body.append(a); a.click(); a.remove();
+          } catch (e) { oops(e); }
+        },
+      }, 'Export my data'),
+      h('button', { class: 'btn small ghost', onclick: signOut }, 'Sign out')),
     h('button', {
       class: 'btn small danger', onclick: async () => {
         if (!await confirmBox('Delete this account?', 'Profile, memberships and settings go. Message bodies you sent are wiped. This cannot be undone.', 'Delete forever')) return;
@@ -299,7 +320,7 @@ export async function openSettings() {
   const wrap = h('div', {},
     h('div', { class: 'side-head' }, h('h3', { class: 'display' }, 'Settings'),
       h('button', { class: 'btn small ghost', onclick: () => openSide(null) }, 'Close')),
-    profileSection(), appearanceSection(), notificationsSection(), focusSection(),
+    profileHero(), appearanceSection(), notificationsSection(), focusSection(),
     privacySection(), accessibilitySection(), accountSection());
   openSide(wrap);
   wrap.insertBefore(await securitySection(), wrap.lastChild);

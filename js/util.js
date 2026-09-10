@@ -1,4 +1,4 @@
-// DOM + formatting helpers, icons, toasts, modals.
+// DOM + formatting helpers, icons, toasts, modals, context menus.
 
 export const $  = (s, r = document) => r.querySelector(s);
 export const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -25,7 +25,7 @@ export const clear = el => { while (el.firstChild) el.removeChild(el.firstChild)
 export const esc = s => String(s ?? '').replace(/[&<>"']/g, c =>
   ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
-/* ── icons (inline SVG, no icon font, no network) ───────────────────── */
+/* ── icons (inline SVG, no icon font, no network) ─────────────────── */
 /* P holds single-colour outline glyphs: one string of M-segments, stroked.
    Cheap and uniform, but it cannot express a filled shape, a rounded rect or
    a slash that has to punch through the artwork underneath it — which is
@@ -51,9 +51,27 @@ const P = {
   play: 'M7 4l12 8-12 8z', pause: 'M8 5h3v14H8zM13 5h3v14h-3z', globe: 'M12 21a9 9 0 100-18 9 9 0 000 18zM3 12h18M12 3c3 3.5 3 14.5 0 18M12 3c-3 3.5-3 14.5 0 18',
   eye: 'M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8zM12 15a3 3 0 100-6 3 3 0 000 6z',
   'eye-off': 'M3 3l18 18M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19m-6.72-1.07a3 3 0 11-4.24-4.24M6.61 6.61A18.45 18.45 0 001 12s4 8 11 8a10.94 10.94 0 005.39-1.39',
-  keypad: 'M5 5h3v3H5z M10.5 5h3v3h-3z M16 5h3v3h-3z M5 10.5h3v3H5z M10.5 10.5h3v3h-3z M16 10.5h3v3h-3z M5 16h3v3H5z M10.5 16h3v3h-3z M16 16h3v3h-3z', // unused for now — kept in case a future dial pad needs it
   speaker: 'M4 9v6h3l5 4V5L7 9z M15 9a3 3 0 010 6 M18 6a7 7 0 010 12',
   wave: 'M4 10v4 M8 6v12 M12 3v18 M16 6v12 M20 10v4',
+
+  /* added for the reorganised chrome: context menus, the wallpaper picker,
+     the profile sheet and the settings list all label their rows now */
+  image: 'M4 5h16v14H4z M4 16.5l4.6-5 3.4 3.8 3-2.6L20 17 M9 9.6v.01',
+  palette: 'M12 21a9 9 0 010-18c5 0 9 3.4 9 7.6 0 2.6-2.1 4.4-4.7 4.4H15a2 2 0 00-1.4 3.4A1.7 1.7 0 0112 21z M7.6 10.2v.01 M10.2 7.2v.01 M14.2 7.6v.01',
+  bell: 'M6 16v-5a6 6 0 1112 0v5l2 2H4z M10 21h4',
+  'bell-off': 'M3 3l18 18 M8.4 5.4A6 6 0 0118 11v5l1.6 1.6 M6 11v5l-2 2h12 M10 21h4',
+  archive: 'M3 6h18v4H3z M5 10v10h14V10 M10 14h4',
+  chevron: 'M9 6l6 6-6 6',
+  download: 'M12 4v11 M7.5 11.5l4.5 4.5 4.5-4.5 M5 20h14',
+  person: 'M12 12a4 4 0 100-8 4 4 0 000 8z M4 21c0-4.1 3.6-6.6 8-6.6s8 2.5 8 6.6',
+  eraser: 'M8.5 20H20 M4.5 16.2l7.3-7.3 5 5-4.4 4.4H8.5z M11.8 8.9l3.1-3.1 5 5-3.1 3.1',
+  shield: 'M12 3l8 3v6c0 5-3.5 8.2-8 9.2-4.5-1-8-4.2-8-9.2V6z',
+  sliders: 'M4 8h9 M17 8h3 M4 16h3 M11 16h9 M14 5.2v5.6 M8 13.2v5.6',
+  folder: 'M3 7h6l2 2.4h10V20H3z',
+  camera: 'M4 8h3.2L9 6h6l1.8 2H20v12H4z M12 17.4a3.6 3.6 0 100-7.2 3.6 3.6 0 000 7.2z',
+  key: 'M14.5 9.5a4.2 4.2 0 10-4.7 4.2L8.4 15H6.6v2H4.6v2H2.5v-3.1l7.3-7.3a4.2 4.2 0 014.7-2z',
+  logout: 'M10 5H5v14h5 M14.5 8.5l3.5 3.5-3.5 3.5 M9.5 12H18',
+  broadcast: 'M12 14a2 2 0 100-4 2 2 0 000 4z M7.8 7.8a6 6 0 000 8.4 M16.2 7.8a6 6 0 010 8.4 M4.8 4.8a10 10 0 000 14.4 M19.2 4.8a10 10 0 010 14.4',
 };
 
 /* Filled artwork for the call controls, matching the platform call UI:
@@ -80,9 +98,12 @@ const F = {
   'video-off-fill': CAM_BODY + SLASH,
   'screen-fill': '<rect x="2.7" y="4.9" width="18.6" height="13.1" rx="3.2" stroke-width="1.9"/>'
     + '<path fill="currentColor" stroke="none" d="M12 7.9l3.6 3.8h-2.45v3.9h-2.3v-3.9H8.4L12 7.9Z"/>',
+  'screen-off-fill': '<rect x="2.7" y="4.9" width="18.6" height="13.1" rx="3.2" stroke-width="1.9"/>'
+    + '<path fill="currentColor" stroke="none" d="M12 7.9l3.6 3.8h-2.45v3.9h-2.3v-3.9H8.4L12 7.9Z"/>' + SLASH,
   'speaker-fill': '<path fill="currentColor" stroke="none" d="M12.05 3.5a.9.9 0 0 1 .95.9v15.2a.9.9 0 0 1-1.5.67L7.1 16.35H4.2A1.2 1.2 0 0 1 3 15.15V8.85a1.2 1.2 0 0 1 1.2-1.2h2.9l4.4-3.92a.9.9 0 0 1 .55-.23Z"/>'
     + '<path stroke-width="1.9" d="M16.4 9.2a4 4 0 0 1 0 5.6M19.1 6.6a8 8 0 0 1 0 10.8"/>',
   'phone-fill': '<path fill="currentColor" stroke="none" d="M7.6 2.9c.85-.42 1.88-.1 2.35.72l1.55 2.7c.45.79.22 1.79-.53 2.3l-1.2.83a10.9 10.9 0 0 0 4.05 4.05l.83-1.2c.51-.75 1.51-.98 2.3-.53l2.7 1.55c.82.47 1.14 1.5.72 2.35l-.93 1.87c-.4.8-1.26 1.26-2.14 1.14C10.6 18.5 5.5 13.4 4.6 5.97c-.12-.88.34-1.74 1.14-2.14l1.86-.93Z"/>',
+  'mic-round-fill': MIC_BODY,
 };
 F['phone-down-fill'] = F['phone-fill'];
 
@@ -126,11 +147,12 @@ export function setActiveNav(name) {
   $$('.rail-nav .rail-btn[data-nav]').forEach((b, i) => {
     const on = b.dataset.nav === name;
     b.classList.toggle('is-on', on);
+    b.setAttribute('aria-selected', String(on));
     if (on) nav?.style.setProperty('--rail-i', String(i));
   });
 }
 
-/* ── time ──────────────────────────────────────────────────── */
+/* ── time ──────────────────────────────────────────── */
 const fmtTime = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' });
 const fmtDay  = new Intl.DateTimeFormat(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
 export const clock = d => fmtTime.format(new Date(d));
@@ -164,7 +186,7 @@ export const dur = s => {
 };
 export const bytes = n => n < 1024 ? `${n} B` : n < 1048576 ? `${(n / 1024).toFixed(0)} KB` : `${(n / 1048576).toFixed(1)} MB`;
 
-/* ── feedback ─────────────────────────────────────────────── */
+/* ── feedback ────────────────────────────────────── */
 export function toast(msg, bad = false) {
   const t = h('div', { class: 'toast' + (bad ? ' bad' : ''), text: msg });
   $('#toasts').append(t);
@@ -187,6 +209,9 @@ export function toast(msg, bad = false) {
 // escape somewhere between being shared and being tapped (chat apps and
 // link shorteners do mangle them); "URI malformed" on its own tells the
 // person nothing about what to do next.
+// NotAllowedError is what getUserMedia/getDisplayMedia throw when the person
+// dismissed the browser prompt, and NotFoundError when there is no such
+// device — both used to surface as bare DOMException text.
 // Anything we haven't special-cased still falls through to the raw message,
 // so new/unexpected errors are never hidden.
 function friendlyMessage(e) {
@@ -194,6 +219,9 @@ function friendlyMessage(e) {
   if (e instanceof URIError || /URI malformed|Provided URL is malformed/i.test(e?.message || '')) {
     return 'That link looks damaged — ask for it again, or paste it in full rather than tapping a preview.';
   }
+  if (e?.name === 'NotAllowedError') return 'Permission was not given, so nothing started. You can allow it and try again.';
+  if (e?.name === 'NotFoundError' || e?.name === 'OverconstrainedError') return 'No usable microphone or camera was found on this device.';
+  if (e?.name === 'NotReadableError') return 'Another app is holding the camera or microphone. Close it and try again.';
   return e?.message || String(e);
 }
 export const oops = e => { console.error(e); toast(friendlyMessage(e), true); };
@@ -258,6 +286,108 @@ export function promptBox(title, { label = '', value = '', type = 'text', note =
     input.focus();
   });
 }
+
+/* ── context menu ─────────────────────────────────────────────────────────
+   What long-pressing a chat used to open was the same 560px-wide dialog used
+   for forms — centred, tall, and nowhere near the thumb that summoned it.
+   This is a real context menu instead: a compact card that appears at the
+   press, aligned to whichever side of the screen the press came from, with a
+   scrim you can tap anywhere to back out. Touch devices also get an explicit
+   Cancel row, because "tap outside" is not discoverable on a phone.
+
+   items: [{ label, icon, trail, danger, on, onclick } | { sep: true }] */
+let openPop = null;
+
+export function closePop() {
+  const s = openPop;
+  openPop = null;
+  if (!s) return;
+  s.classList.remove('is-open');
+  setTimeout(() => s.remove(), 170);
+}
+
+export function popMenu(items, opts = {}) {
+  closePop();
+  const scrim = h('div', { class: 'pop-scrim' });
+  const menu = h('div', { class: 'pop-menu', role: 'menu' });
+  if (opts.title) menu.append(h('div', { class: 'pop-title', text: opts.title }));
+  items.flat(3).filter(Boolean).forEach(it => {
+    if (it.sep) { menu.append(h('div', { class: 'pop-sep' })); return; }
+    const b = h('button', {
+      class: 'pop-item' + (it.danger ? ' danger' : '') + (it.on ? ' is-on' : ''),
+      role: 'menuitem', type: 'button',
+      onclick: async e => {
+        e.stopPropagation();
+        closePop();
+        try { await it.onclick?.(); } catch (err) { oops(err); }
+      },
+    });
+    b.append(it.icon ? iconEl(it.icon, 17) : h('span', { class: 'pop-gap' }));
+    b.append(h('span', { class: 'pop-label', text: it.label }));
+    if (it.trail) b.append(h('small', { text: it.trail }));
+    menu.append(b);
+  });
+  if (matchMedia('(hover: none)').matches) {
+    menu.append(h('div', { class: 'pop-sep' }),
+      h('button', { class: 'pop-item pop-cancel', type: 'button', onclick: closePop },
+        h('span', { class: 'pop-label', text: 'Cancel' })));
+  }
+  scrim.append(menu);
+  document.body.append(scrim);
+  placePop(menu, opts);
+  openPop = scrim;
+  requestAnimationFrame(() => scrim.classList.add('is-open'));
+  scrim.addEventListener('pointerdown', e => { if (e.target === scrim) closePop(); });
+  return scrim;
+}
+
+function placePop(menu, { x, y, anchor }) {
+  const pad = 12;
+  const r = anchor?.getBoundingClientRect?.();
+  const px = x ?? (r ? r.right : innerWidth / 2);
+  const py = y ?? (r ? r.bottom + 6 : innerHeight / 2);
+  const w = menu.offsetWidth, mh = menu.offsetHeight;
+  // A press past the middle of the screen opens leftwards from the finger, so
+  // the card never runs off the edge and never hides what was pressed.
+  let left = px > innerWidth / 2 ? px - w : px;
+  left = Math.min(Math.max(pad, left), Math.max(pad, innerWidth - w - pad));
+  let top = py + 4;
+  if (top + mh > innerHeight - pad) top = py - mh - 4;
+  top = Math.min(Math.max(pad, top), Math.max(pad, innerHeight - mh - pad));
+  menu.style.left = left + 'px';
+  menu.style.top = top + 'px';
+  menu.style.transformOrigin = `${Math.round(px - left)}px ${Math.round(py - top)}px`;
+}
+
+/* Long-press that survives a scrolling list: a finger that travels more than
+   10px is scrolling, not pressing, so the timer is dropped. Returns nothing —
+   read el.dataset.pressed in your click handler to swallow the tap that would
+   otherwise follow the menu opening. */
+export function longPress(el, fn, ms = 460) {
+  let timer = null, sx = 0, sy = 0;
+  const stop = () => { clearTimeout(timer); timer = null; };
+  el.addEventListener('pointerdown', e => {
+    if (e.pointerType === 'mouse') return;
+    sx = e.clientX; sy = e.clientY;
+    stop();
+    timer = setTimeout(() => {
+      timer = null;
+      el.dataset.pressed = '1';
+      try { navigator.vibrate?.(12); } catch { /* not everywhere */ }
+      fn({ x: sx, y: sy });
+    }, ms);
+  }, { passive: true });
+  el.addEventListener('pointermove', e => {
+    if (timer && (Math.abs(e.clientX - sx) > 10 || Math.abs(e.clientY - sy) > 10)) stop();
+  }, { passive: true });
+  el.addEventListener('pointerup', stop, { passive: true });
+  el.addEventListener('pointercancel', stop, { passive: true });
+}
+
+addEventListener('keydown', e => {
+  if (e.key === 'Escape' && openPop) { e.stopPropagation(); closePop(); }
+}, true);
+
 export const debounce = (fn, ms = 250) => { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; };
 export const initials = n => (n || '?').trim().split(/\s+/).slice(0, 2).map(w => w[0]).join('').toUpperCase();
 export const uuid = () => crypto.randomUUID();
@@ -265,3 +395,6 @@ export const linkify = txt => esc(txt).replace(/(https?:\/\/[^\s<]+)/g,
   u => `<a href="${u}" target="_blank" rel="noopener noreferrer">${u}</a>`)
   .replace(/(^|\s)@([\w]+)/g, '$1<b>@$2</b>');
 export const firstUrl = txt => (txt || '').match(/https?:\/\/[^\s]+/)?.[0] || null;
+
+export const avatarData = name => 'data:image/svg+xml;utf8,' + encodeURIComponent(
+  `<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128"><rect width="128" height="128" rx="64" fill="#d9d2c7"/><text x="64" y="80" font-family="sans-serif" font-size="48" fill="#4a4438" text-anchor="middle">${initials(name)}</text></svg>`);

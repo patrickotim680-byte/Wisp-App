@@ -1,8 +1,8 @@
 import { sb, rpc, sel, upd, del, ins, channel, drop } from './db.js';
 import { S, emit, person } from './state.js';
-import { $, $$, h, clear, toast, oops, modal, closeModal, confirmBox, promptBox,
-         shortWhen, initials, lastSeenText, iconEl, debounce, esc, setActiveNav } from './util.js';
-import { applyWallpaper, applyContactAccent, applySettings } from './theme.js';
+import { $, $$, h, clear, toast, oops, modal, closeModal, confirmBox, promptBox, popMenu,
+         longPress, shortWhen, initials, lastSeenText, iconEl, debounce, esc, setActiveNav, avatarData } from './util.js';
+import { applyChatStyle, applyWallpaper, applySettings, rememberChatStyle } from './theme.js';
 import { renderThread, appendMessage, patchStatus, patchReaction, loadMessages, applyCachedThread } from './thread.js';
 import { notify } from './notify.js';
 import { getMemThread, warmCache } from './cache.js';
@@ -78,6 +78,8 @@ const previewText = c => {
   return c.last_body || kindWord[c.last_kind] || 'No messages yet';
 };
 
+export const chatPhoto = c => c.icon_url || (c.type === 'dm' ? person(c.other_id)?.photo_url : null) || null;
+
 export function renderChatList() {
   if (S.view !== 'chats') return;
   const body = clear($('#list-body'));
@@ -89,82 +91,75 @@ export function renderChatList() {
   }
   rows.forEach(c => {
     const p = person(c.other_id);
-    const av = c.icon_url
-      ? h('img', { class: 'av', src: c.icon_url, alt: '' })
+    const photo = chatPhoto(c);
+    const av = photo
+      ? h('img', { class: 'av', src: photo, alt: '' })
       : h('div', { class: 'av' }, initials(c.name));
     const row = h('button', {
       class: 'row' + (S.chat?.chat_id === c.chat_id ? ' is-on' : ''),
-      onclick: () => openChat(c.chat_id),
-      oncontextmenu: e => { e.preventDefault(); chatMenu(c, e); },
+      // A long press that opened the menu must not also open the chat when the
+      // finger lifts — longPress() flags the element, this clears the flag.
+      onclick: e => {
+        if (row.dataset.pressed) { delete row.dataset.pressed; return; }
+        openChat(c.chat_id);
+      },
+      oncontextmenu: e => { e.preventDefault(); chatMenu(c, { x: e.clientX, y: e.clientY }); },
     },
       av,
       h('div', { class: 'row-main' },
         h('div', { class: 'row-top' },
           h('span', { class: 'row-name' }, c.pinned ? '📌 ' : '', c.name || 'Chat'),
           c.type !== 'dm' && h('small', { class: 'hint' }, `${c.member_count}`)),
-        h('div', { class: 'row-prev' },
-          c.type !== 'dm' && c.last_body ? '' : '', previewText(c))),
+        h('div', { class: 'row-prev' }, previewText(c))),
       h('div', { class: 'row-side' },
         h('span', {}, shortWhen(c.last_at)),
         h('div', { class: 'dot-row' },
           c.unread > 0 && h('b', { class: 'pill' }, String(c.unread)),
           c.muted && '🔇', c.locked && '🔒', c.disappear_seconds > 0 && '⏳',
           c.e2ee && '🔐')));
-    row.oncontextmenu = e => { e.preventDefault(); chatMenu(c, e); };
-    let t;
-    row.addEventListener('touchstart', () => { t = setTimeout(() => chatMenu(c), 550); }, { passive: true });
-    row.addEventListener('touchend', () => clearTimeout(t));
+    longPress(row, at => chatMenu(c, at));
     body.append(row);
-    if (p?.is_online) row.querySelector('.row-name').append(' ', h('span', { class: 'hint' }, '•'));
+    if (p?.is_online) row.querySelector('.row-name').append(' ', h('span', { class: 'online-dot', title: 'online' }));
   });
 }
 
-function chatMenu(c) {
-  const act = (label, fn, cls = '') => h('button', {
-    class: 'btn ' + cls, onclick: async () => { closeModal(); try { await fn(); } catch (e) { oops(e); } },
-  }, label);
+/* A real context menu at the finger, not a full-width dialog in the middle of
+   the screen. Only the things you'd actually reach for on a long press live
+   here; the rest (chat lock, clearing history, moving to a tab) sits in the
+   chat's own details panel, where there's room to explain what it does. */
+function chatMenu(c, at = {}) {
   const me = { chat_id: c.chat_id, user_id: S.me.id };
-  modal(
-    h('h3', { class: 'display' }, c.name || 'Chat'),
-    h('div', { class: 'stack' },
-      act(c.pinned ? 'Unpin' : 'Pin to top', async () => { await upd('chat_members', { pinned: !c.pinned }, me); loadChats(); }),
-      act(c.muted ? 'Unmute' : 'Mute…', async () => {
+  const items = [
+    c.type === 'dm'
+      ? { label: 'View profile', icon: 'person', onclick: async () => (await import('./panels.js')).openProfileCard(c.other_id) }
+      : { label: 'Group info', icon: 'info', onclick: async () => { await openChat(c.chat_id); (await import('./panels.js')).openChatInfo(); } },
+    { label: c.pinned ? 'Unpin' : 'Pin to top', icon: 'pin', on: c.pinned,
+      onclick: async () => { await upd('chat_members', { pinned: !c.pinned }, me); loadChats(); } },
+    { label: c.muted ? 'Unmute' : 'Mute', icon: c.muted ? 'bell' : 'bell-off', on: c.muted,
+      onclick: async () => {
         if (c.muted) { await upd('chat_members', { muted_until: null, mute_forever: false }, me); return loadChats(); }
-        closeModal();
-        modal(h('h3', { class: 'display' }, 'Mute for'), h('div', { class: 'stack' },
-          ...[['8 hours', 8], ['1 week', 168]].map(([l, hrs]) => act(l, async () => {
-            await upd('chat_members', { muted_until: new Date(Date.now() + hrs * 3600e3).toISOString() }, me); loadChats();
-          })),
-          act('Always', async () => { await upd('chat_members', { mute_forever: true }, me); loadChats(); })));
-      }),
-      act(c.archived ? 'Unarchive' : 'Archive', async () => { await upd('chat_members', { archived: !c.archived }, me); loadChats(); }),
-      act('Mark as read', async () => { await rpc('mark_read', { p_chat: c.chat_id }); loadChats(); }),
-      S.folders.length ? h('label', {}, 'Move to tab',
-        h('select', {
-          onchange: async e => { await upd('chat_members', { folder_id: e.target.value || null }, me); loadChats(); closeModal(); },
-        }, h('option', { value: '' }, 'None'),
-          ...S.folders.map(f => h('option', { value: f.id, selected: f.id === c.folder_id }, f.name)))) : null,
-      act(c.locked ? 'Remove chat lock' : 'Lock chat with PIN…', async () => {
-        if (c.locked) { await rpc('set_chat_lock', { p_chat: c.chat_id, p_pin: null }); }
-        else {
-          const pin = await promptBox('Chat lock', { label: 'PIN', type: 'password', note: 'Asked once per session before this chat opens.' });
-          if (pin) await rpc('set_chat_lock', { p_chat: c.chat_id, p_pin: pin });
-        }
-        loadChats();
-      }),
-      act('Clear history', async () => {
-        if (await confirmBox('Clear this history?', 'Only removes it for you. The other side keeps their copy.', 'Clear')) {
-          await rpc('clear_history', { p_chat: c.chat_id });
-          if (S.chat?.chat_id === c.chat_id) await loadMessages();
-          loadChats();
-        }
-      }, 'danger'),
-      act(c.type === 'dm' ? 'Delete chat' : 'Leave group', async () => {
+        popMenu([
+          { label: 'For 8 hours', icon: 'clock', onclick: async () => { await upd('chat_members', { muted_until: new Date(Date.now() + 8 * 3600e3).toISOString() }, me); loadChats(); } },
+          { label: 'For a week', icon: 'clock', onclick: async () => { await upd('chat_members', { muted_until: new Date(Date.now() + 168 * 3600e3).toISOString() }, me); loadChats(); } },
+          { label: 'Always', icon: 'bell-off', onclick: async () => { await upd('chat_members', { mute_forever: true }, me); loadChats(); } },
+        ], { ...at, title: 'Mute ' + (c.name || 'chat') });
+      } },
+    c.unread > 0 && { label: 'Mark as read', icon: 'check',
+      onclick: async () => { await rpc('mark_read', { p_chat: c.chat_id }); loadChats(); } },
+    { label: c.archived ? 'Unarchive' : 'Archive', icon: 'archive', on: c.archived,
+      onclick: async () => { await upd('chat_members', { archived: !c.archived }, me); loadChats(); } },
+    { label: 'Theme & wallpaper', icon: 'palette',
+      onclick: async () => { await openChat(c.chat_id); (await import('./panels.js')).openChatStyle(); } },
+    { sep: true },
+    { label: c.type === 'dm' ? 'Delete chat' : 'Leave group', icon: 'trash', danger: true,
+      onclick: async () => {
         if (!await confirmBox(c.type === 'dm' ? 'Delete this chat?' : 'Leave this group?', 'You can always start over later.', 'Confirm')) return;
         await rpc('leave_chat', { p_chat: c.chat_id });
         if (S.chat?.chat_id === c.chat_id) closeChat();
         loadChats();
-      }, 'danger')));
+      } },
+  ];
+  popMenu(items, { ...at, title: c.name || 'Chat' });
 }
 
 export function closeChat() {
@@ -204,17 +199,13 @@ export async function openChat(chatId) {
   // a chat you're not in is still visible.
   S.chat = c; S.msgs = []; S.members = []; S.selection.clear(); S.replyTo = null;
   S.msgsReady = false;
-  // Set this chat's accent right now, synchronously, before anything below
-  // paints a single pixel. This used to run near the *end* of openChat() —
-  // after members, stars, bookmarks and messages had all loaded — so the
-  // thread would render a frame or two in the previous chat's accent and
-  // then visibly swap colour once that finally caught up (the "green then
-  // blue" flash). Contact accents are already sitting in S.people (loadPeople()
-  // fetched them for every chat back in loadChats()), so there's nothing to
-  // wait for. Non-DM chats fall back to the global accent the same way
-  // closeChat() does, so a group opened right after a custom-accent DM
-  // doesn't keep wearing that DM's colour.
-  applyContactAccent(c.type === 'dm' ? person(c.other_id)?.accent : null);
+  // This chat's own accent and wallpaper, right now, synchronously, before
+  // anything paints a pixel. Per-chat appearance lives on chat_members, which
+  // hasn't loaded yet at this point — so applyChatStyle() falls back to the
+  // small localStorage cache written the last time this chat was open on this
+  // device, then to the contact accent, then to the account's. No flash of the
+  // wrong colour and no flash of the wrong wallpaper.
+  applyChatStyle();
   // Synchronous, zero-latency: if this chat is already warm in memory (see
   // warmCache()/warmAllCached()), paint its real history right now, in the
   // same tick as the tap — never a blank frame before it, not even briefly.
@@ -237,6 +228,8 @@ export async function openChat(chatId) {
 
     S.members = await sel('chat_members', { select: '*', eq: { chat_id: chatId } });
     if (myToken !== S.chatToken) return;
+    rememberChatStyle();
+    applyChatStyle();
     await loadPeople(S.members.map(m => m.user_id));
     const [stars, marks] = await Promise.all([
       sel('stars', { eq: { user_id: S.me.id } }),
@@ -277,18 +270,20 @@ export function renderConvHeader() {
   const p = person(c.other_id);
   $('#conv-name').textContent = c.name || 'Chat';
   const img = $('#conv-avatar');
-  if (c.icon_url) { img.src = c.icon_url; img.hidden = false; } else img.hidden = true;
+  // Always something to look at, and always tappable: the header portrait is
+  // the way into someone's photo and profile now, so it can't be missing.
+  img.src = chatPhoto(c) || avatarData(c.name || 'Chat');
   const typers = activeTypers(c.chat_id);
   let sub;
-  if (typers.length) sub = typers.length === 1 ? `${person(typers[0])?.display_name?.split(' ')[0] || 'Someone'} is typing…` : `${typers.length} people typing…`;
+  if (typers.length) sub = typers.length === 1 ? `${person(typers[0])?.display_name?.split(' ')[0] || 'Someone'} is typing\u2026` : `${typers.length} people typing\u2026`;
   else if (c.type === 'dm') sub = lastSeenText(p) || (p?.about ?? '');
-  else sub = S.members.map(m => m.user_id === S.me.id ? 'You' : (person(m.user_id)?.display_name || '')).slice(0, 6).join(', ');
+  else sub = S.members.map(m => m.user_id === S.me.id ? 'You' : (person(m.user_id)?.display_name || '')).filter(Boolean).slice(0, 6).join(', ');
   $('#conv-sub').textContent = [c.e2ee ? '🔐' : '', c.disappear_seconds ? '⏳' : '', sub].filter(Boolean).join(' ');
   $('#btn-call-video').hidden = c.type === 'broadcast';
   $('#btn-call-audio').hidden = c.type === 'broadcast';
 }
 
-/* ── realtime ──────────────────────────────────────────────────────────── */
+/* ── realtime ────────────────────────────────────────────────────────── */
 export function subscribeChat(chatId) {
   channel('chat', ch => ch
     .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages', filter: `chat_id=eq.${chatId}` },
@@ -320,7 +315,6 @@ export function subscribeChat(chatId) {
 export function subscribeGlobal() {
   channel('global', ch => ch
     .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, async ({ new: m }) => {
-      const mine = S.chats.find(c => c.chat_id === m.chat_id);
       await loadChats();
       if (m.sender_id === S.me.id) return;
       if (S.chat?.chat_id === m.chat_id && document.visibilityState === 'visible') return;
@@ -356,7 +350,7 @@ export function updateBadge() {
   if (navigator.setAppBadge) n ? navigator.setAppBadge(n) : navigator.clearAppBadge?.();
 }
 
-/* ── starting chats ────────────────────────────────────────────────────── */
+/* ── starting chats ───────────────────────────────────────────────────── */
 export async function startDm(userId) {
   const id = await rpc('get_or_create_dm', { p_other: userId });
   await loadChats();

@@ -75,30 +75,16 @@
 
 <!-- ── app ─────────────────────────────────────────────────── -->
 <main id="app" class="app" hidden>
-  <nav class="rail">
-    <div class="rail-nav" id="rail-nav">
-      <span class="rail-glow" aria-hidden="true"></span>
-      <button class="rail-btn is-on" data-nav="chats" title="Chats"><span class="ico">chat</span><b id="badge-unread" class="badge" hidden>0</b></button>
-      <button class="rail-btn" data-nav="people" title="People"><span class="ico">people</span></button>
-      <button class="rail-btn" data-nav="calls" title="Calls"><span class="ico">call</span></button>
-      <button class="rail-btn" data-nav="saved" title="Starred, pinned, bookmarks"><span class="ico">star</span></button>
-      <button class="rail-btn" data-nav="scheduled" title="Scheduled"><span class="ico">clock</span></button>
-      <button class="rail-btn" data-nav="settings" title="Settings"><span class="ico">gear</span></button>
-    </div>
-    <div class="rail-tools">
-      <button class="rail-btn avatar-btn" id="btn-me" title="Profile"><img id="me-avatar" alt="" /></button>
-    </div>
-  </nav>
-
   <section class="list" id="list-pane">
     <header class="list-head">
       <h2 id="list-title">Chats</h2>
       <div class="list-actions">
         <button class="icon-btn" id="btn-new-chat" title="New chat"><span class="ico">plus</span></button>
-        <button class="icon-btn" id="btn-new-group" title="New group"><span class="ico">group-add</span></button>
+        <button class="icon-btn" id="btn-new-group" title="New group or broadcast"><span class="ico">group-add</span></button>
       </div>
     </header>
     <div class="search-wrap">
+      <span class="search-ico ico">search</span>
       <input id="q" placeholder="Search messages, people, files" autocomplete="off" />
       <button class="search-cancel" id="btn-search-cancel" type="button" aria-label="Cancel search">Cancel</button>
     </div>
@@ -112,19 +98,23 @@
       <p class="muted">Pick a conversation, or start one from People.</p>
     </div>
 
+    <!-- One header, one composer. The wallpaper is its own fixed layer so it
+         never scrolls with the messages and never tints the chrome. -->
     <div class="conv-inner" id="conv-inner" hidden>
+      <div class="thread-wall wall" id="thread-wall" aria-hidden="true"></div>
+
       <header class="conv-head">
-        <button class="icon-btn only-narrow" id="btn-back"><span class="ico">back</span></button>
-        <button class="conv-id" id="conv-id">
+        <button class="icon-btn only-narrow" id="btn-back" title="Back"><span class="ico">back</span></button>
+        <button class="conv-face" id="btn-conv-photo" title="View photo and profile">
           <img id="conv-avatar" alt="" />
-          <span><b id="conv-name"></b><small id="conv-sub"></small></span>
+        </button>
+        <button class="conv-id" id="conv-id" title="Details">
+          <b id="conv-name"></b><small id="conv-sub"></small>
         </button>
         <div class="conv-tools">
-          <button class="icon-btn" id="btn-search-in" title="Search in chat"><span class="ico">search</span></button>
-          <button class="icon-btn" id="btn-digest" title="Catch me up"><span class="ico">spark</span></button>
-          <button class="icon-btn" id="btn-call-audio" title="Voice call"><span class="ico">call</span></button>
           <button class="icon-btn" id="btn-call-video" title="Video call"><span class="ico">video</span></button>
-          <button class="icon-btn" id="btn-info" title="Details"><span class="ico">info</span></button>
+          <button class="icon-btn" id="btn-call-audio" title="Voice call"><span class="ico">call</span></button>
+          <button class="icon-btn" id="btn-conv-more" title="More"><span class="ico">dots</span></button>
         </div>
       </header>
 
@@ -143,19 +133,20 @@
         <div class="reply-chip" id="reply-chip" hidden></div>
         <div class="attach-row" id="attach-row" hidden></div>
         <div class="composer-main">
-          <button class="icon-btn" id="btn-attach" title="Attach"><span class="ico">clip</span></button>
-          <button class="icon-btn" id="btn-emoji" title="Emoji"><span class="ico">smile</span></button>
+          <button class="icon-btn" id="btn-attach" title="Attach"><span class="ico">plus</span></button>
           <div class="input-shell">
             <textarea id="input" rows="1" placeholder="Message"></textarea>
             <div class="mention-pop" id="mention-pop" hidden></div>
           </div>
-          <button class="icon-btn" id="btn-schedule" title="Schedule send"><span class="ico">clock</span></button>
-          <button class="icon-btn rec" id="btn-mic" title="Hold to record"><span class="ico">mic</span></button>
+          <!-- exactly one of these is visible at a time: mic on an empty
+               composer, send the moment there is something to send -->
+          <button class="icon-btn rec" id="btn-mic" title="Hold to record, tap to record hands-free"><span class="ico">mic</span></button>
           <button class="icon-btn send" id="btn-send" title="Send"><span class="ico">send</span></button>
         </div>
         <div class="rec-strip" id="rec-strip" hidden>
           <span class="rec-dot" id="rec-dot"></span><span id="rec-time">0:00</span>
           <canvas id="rec-wave" height="28"></canvas>
+          <small class="hint" id="rec-hint"></small>
           <button class="icon-btn" id="rec-pause" title="Pause"><span class="ico">pause</span></button>
           <button class="btn small ghost" id="rec-cancel">Discard</button>
           <button class="btn small primary" id="rec-send">Send</button>
@@ -166,6 +157,29 @@
   </section>
 
   <aside class="side" id="side" hidden></aside>
+
+  <!-- Five destinations, no duplicates: your profile lives at the top of
+       Settings rather than in a second button next to the gear. -->
+  <nav class="rail" id="rail" aria-label="Main">
+    <div class="rail-nav" id="rail-nav" role="tablist">
+      <span class="rail-glow" aria-hidden="true"></span>
+      <button class="rail-btn is-on" role="tab" aria-selected="true" data-nav="chats">
+        <span class="ico">chat</span><span class="rail-label">Chats</span><b id="badge-unread" class="badge" hidden>0</b>
+      </button>
+      <button class="rail-btn" role="tab" aria-selected="false" data-nav="calls">
+        <span class="ico">call</span><span class="rail-label">Calls</span>
+      </button>
+      <button class="rail-btn" role="tab" aria-selected="false" data-nav="people">
+        <span class="ico">people</span><span class="rail-label">People</span>
+      </button>
+      <button class="rail-btn" role="tab" aria-selected="false" data-nav="saved">
+        <span class="ico">star</span><span class="rail-label">Saved</span>
+      </button>
+      <button class="rail-btn" role="tab" aria-selected="false" data-nav="settings">
+        <span class="ico">gear</span><span class="rail-label">Settings</span>
+      </button>
+    </div>
+  </nav>
 </main>
 
 <!-- ── call overlay ─────────────────────────────────────────── -->
@@ -182,6 +196,7 @@
       </span>
       <span id="call-quality" class="quality"></span>
     </div>
+    <div class="share-flag">Sharing your screen</div>
   </div>
   <!-- filled 26px glyphs, mic and camera swap to their slashed twin when off
        (js/calls.js); voice calls hide the camera, video calls hide the

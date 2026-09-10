@@ -1,6 +1,6 @@
 import { sb, rpc, ins, upd, del } from './db.js';
 import { S, person, nameOf } from './state.js';
-import { $, h, clear, toast, oops, modal, closeModal, promptBox, uuid, dur, debounce, icon, iconEl, initials } from './util.js';
+import { $, h, clear, toast, oops, modal, closeModal, promptBox, popMenu, uuid, dur, debounce, icon, iconEl, initials } from './util.js';
 import { stageFile, uploadStaged } from './media.js';
 import { sealBody } from './crypto.js';
 import { renderThread, appendMessage } from './thread.js';
@@ -8,7 +8,7 @@ import { unlockKeysInteractive } from './auth.js';
 
 const input = () => $('#input');
 
-/* ── sending ───────────────────────────────────────────────────────────── */
+/* ── sending ──────────────────────────────────────────────────────────── */
 export async function send() {
   const chat = S.chat;
   if (!chat) return;
@@ -16,7 +16,7 @@ export async function send() {
   if (!text && !S.pending.length) return;
 
   const staged = S.pending.splice(0);
-  input().value = ''; autosize();
+  input().value = ''; autosize(); syncComposer();
   const reply = S.replyTo?.id || null;
   S.replyTo = null; $('#reply-chip').hidden = true;
   renderAttachRow();
@@ -101,7 +101,7 @@ export async function pushMessage(base) {
   }
 }
 
-/* ── typing ────────────────────────────────────────────────────────────── */
+/* ── typing ───────────────────────────────────────────────────────────── */
 const ping = debounce(() => { if (S.chat) rpc('set_typing', { p_chat: S.chat.chat_id }).catch(() => {}); }, 900);
 
 function autosize() {
@@ -110,23 +110,39 @@ function autosize() {
   el.style.height = Math.min(180, el.scrollHeight) + 'px';
 }
 
-/* ── attachments ───────────────────────────────────────────────────────── */
+/* One rule decides which of the two trailing buttons exists: an empty
+   composer offers the microphone, a composer with something in it offers
+   send. Both live in the markup and CSS swaps them, so there is no layout
+   shift and no second glyph competing for the same job. */
+export function syncComposer() {
+  const main = $('.composer-main');
+  if (!main) return;
+  const armed = !!input().value.trim() || S.pending.length > 0;
+  main.classList.toggle('has-draft', armed);
+}
+
+/* ── attachments ──────────────────────────────────────────────────────── */
 export function renderAttachRow() {
   const row = $('#attach-row');
   row.hidden = !S.pending.length;
   clear(row);
   S.pending.forEach(item => {
-    const thumb = h('div', { class: 'attach-thumb' },
+    const thumb = h('div', { class: 'attach-thumb' + (item.viewOnce ? ' once' : '') },
       item.previewUrl ? h('img', { src: item.previewUrl, alt: '' })
         : h('div', { class: 'doc-glyph', style: { width: '100%', height: '100%' } }, (item.name.split('.').pop() || '?').toUpperCase()),
       h('button', { title: 'Remove', onclick: () => { S.pending = S.pending.filter(x => x !== item); renderAttachRow(); } }, '✕'));
     if (item.kind === 'image' || item.kind === 'video') {
-      thumb.onclick = () => { item.viewOnce = !item.viewOnce; thumb.style.outline = item.viewOnce ? '2px solid var(--accent)' : 'none'; toast(item.viewOnce ? 'View once on' : 'View once off'); };
-      thumb.title = 'Click to toggle view-once';
+      thumb.onclick = () => {
+        item.viewOnce = !item.viewOnce;
+        thumb.classList.toggle('once', item.viewOnce);
+        toast(item.viewOnce ? 'View once on' : 'View once off');
+      };
+      thumb.title = 'Tap to make it view-once';
     }
     row.append(thumb);
   });
-  if (S.pending.length) row.append(h('small', { class: 'hint' }, 'Caption goes in the message box. Click a photo to make it view-once.'));
+  if (S.pending.length) row.append(h('small', { class: 'hint' }, 'Caption goes in the message box. Tap a photo for view-once.'));
+  syncComposer();
 }
 
 async function pickFiles(accept, capture) {
@@ -136,23 +152,26 @@ async function pickFiles(accept, capture) {
   el.click();
 }
 
-function attachMenu() {
-  const item = (label, fn) => h('button', { class: 'btn', onclick: () => { closeModal(); fn(); } }, label);
-  modal(h('h3', { class: 'display' }, 'Attach'), h('div', { class: 'stack' },
-    item('Photos & videos', () => pickFiles('image/*,video/*')),
-    item('Camera', () => pickFiles('image/*', 'environment')),
-    item('Document', () => pickFiles('')),
-    item('Location', shareLocation),
-    item('Contact card', shareContact),
-    item('Poll', createPoll),
-    item('Sticker', stickerPicker)));
+function attachMenu(e) {
+  popMenu([
+    { label: 'Photos & videos', icon: 'image', onclick: () => pickFiles('image/*,video/*') },
+    { label: 'Camera', icon: 'camera', onclick: () => pickFiles('image/*', 'environment') },
+    { label: 'Document', icon: 'file', onclick: () => pickFiles('') },
+    { sep: true },
+    { label: 'Location', icon: 'globe', onclick: shareLocation },
+    { label: 'Contact card', icon: 'person', onclick: shareContact },
+    { label: 'Poll', icon: 'sliders', onclick: createPoll },
+    { label: 'Sticker', icon: 'smile', onclick: stickerPicker },
+    { sep: true },
+    { label: 'Schedule this message', icon: 'clock', onclick: scheduleDialog },
+  ], { anchor: e.currentTarget, title: 'Attach' });
 }
 
 const STICKERS = ['🫠', '🙃', '🫡', '🤌', '🐈', '🌵', '🍜', '☕️', '🛟', '🧊', '🪩', '📮', '🛼', '🧃', '🪴', '🫧'];
 function stickerPicker() {
   modal(h('h3', { class: 'display' }, 'Stickers'),
-    h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '6px' } },
-      STICKERS.map(s => h('button', { class: 'btn ghost', style: { fontSize: '34px' }, onclick: async () => { closeModal(); await pushMessage({ kind: 'sticker', body: s }); } }, s))));
+    h('div', { class: 'sticker-grid' },
+      STICKERS.map(s => h('button', { class: 'sticker', onclick: async () => { closeModal(); await pushMessage({ kind: 'sticker', body: s }); } }, s))));
 }
 
 async function shareLocation() {
@@ -165,7 +184,6 @@ async function shareLocation() {
   navigator.geolocation.getCurrentPosition(async pos => {
     const { latitude: lat, longitude: lng } = pos.coords;
     const expires = live ? new Date(Date.now() + live * 60000).toISOString() : null;
-    const before = S.msgs.length;
     await pushMessage({ kind: 'location', meta: { lat, lng, live: !!live, expires_at: expires } });
     const m = S.msgs.at(-1);
     if (!m?.id || String(m.id).startsWith('tmp-')) return;
@@ -217,14 +235,35 @@ async function createPoll() {
             const [poll] = await ins('polls', { message_id: m.id, question: qIn.value.trim(), multi: multi.checked });
             await ins('poll_options', labels.map((label, position) => ({ poll_id: poll.id, label, position })));
             renderThread(true);
-          } catch (e) { oops(e); }
+          } catch (err) { oops(err); }
         },
       }, 'Post')));
 }
 
-/* ── voice notes ───────────────────────────────────────────────────────── */
+/* ── voice notes ───────────────────────────────────────────────────────────
+   The microphone behaves the way people already expect it to: hold it and
+   talk, let go and it sends. A short tap instead locks recording hands-free,
+   and while you are holding it, sliding left throws the take away. Releasing
+   before the browser has finished granting the microphone is the awkward
+   case, so the intent is remembered and applied the moment recording is
+   actually live. */
 let rec = null;
+let starting = false;
+let pendingRelease = null;
+let held = false;
+
+function recUI(state) {
+  const strip = $('#rec-strip');
+  strip.hidden = state === 'off';
+  strip.classList.toggle('is-locked', state === 'locked');
+  $('#btn-mic')?.classList.toggle('is-live', state !== 'off');
+  const hint = $('#rec-hint');
+  if (hint) hint.textContent = state === 'holding' ? 'Release to send · slide left to cancel' : '';
+}
+
 async function startRec() {
+  if (rec || starting) return;
+  starting = true;
   try {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
     const mr = new MediaRecorder(stream, { mimeType: MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' : 'audio/webm' });
@@ -234,8 +273,8 @@ async function startRec() {
     ctx.createMediaStreamSource(stream).connect(an);
     const buf = new Uint8Array(an.frequencyBinCount);
     const cv = $('#rec-wave');
-    $('#rec-strip').hidden = false;
     rec = { mr, stream, chunks, peaks, ctx, t0: Date.now(), pausedAt: 0, pausedTotal: 0, paused: false };
+    recUI(held ? 'holding' : 'locked');
     setPauseUI(false);
     const tick = () => {
       if (!rec) return;
@@ -257,8 +296,25 @@ async function startRec() {
     mr.ondataavailable = e => chunks.push(e.data);
     mr.start(120);
     requestAnimationFrame(tick);
-  } catch (e) { oops(e); }
+  } catch (e) {
+    pendingRelease = null;
+    recUI('off');
+    oops(e);
+  } finally {
+    starting = false;
+  }
+  if (pendingRelease) { const r = pendingRelease; pendingRelease = null; applyRelease(r); }
 }
+
+function applyRelease(kind) {
+  if (kind === 'lock') { held = false; recUI('locked'); return; }
+  stopRec(kind === 'send');
+}
+function release(kind) {
+  if (!rec) { if (starting) pendingRelease = kind; return; }
+  applyRelease(kind);
+}
+
 function toggleRecPause() {
   if (!rec || rec.mr.state === 'inactive') return;
   if (rec.paused) {
@@ -277,11 +333,13 @@ function setPauseUI(isPaused) {
   if (btn) { btn.innerHTML = icon(isPaused ? 'play' : 'pause', 16); btn.title = isPaused ? 'Resume' : 'Pause'; }
   $('#rec-dot')?.classList.toggle('paused', isPaused);
 }
+
 async function stopRec(sendIt) {
   if (!rec) return;
   const { mr, stream, chunks, peaks, t0, ctx, pausedTotal, paused, pausedAt } = rec;
   rec = null;
-  $('#rec-strip').hidden = true;
+  held = false;
+  recUI('off');
   const finalPausedTotal = pausedTotal + (paused ? Date.now() - pausedAt : 0);
   await new Promise(r => { if (mr.state === 'inactive') return r(); mr.onstop = r; mr.stop(); });
   stream.getTracks().forEach(t => t.stop());
@@ -289,7 +347,7 @@ async function stopRec(sendIt) {
   if (!sendIt) return;
   const blob = new Blob(chunks, { type: mr.mimeType });
   const duration = (Date.now() - t0 - finalPausedTotal) / 1000;
-  if (duration < 0.4) return toast('Too short.');
+  if (duration < 0.4) return toast('Too short — hold the mic a moment longer.');
   const step = Math.max(1, Math.floor(peaks.length / 48));
   const wave = [];
   for (let i = 0; i < peaks.length; i += step) wave.push(+peaks.slice(i, i + step).reduce((a, b) => Math.max(a, b), 0).toFixed(2));
@@ -299,22 +357,31 @@ async function stopRec(sendIt) {
   } catch (e) { oops(e); }
 }
 
-/* ── emoji + mentions ──────────────────────────────────────────────────── */
-const EMOJI_SET = ['😀','😂','🥲','😊','😍','😘','🤔','🫡','😴','🤒','🥳','😎','🤝','👍','👎','🙏','👏','💪','🔥','✨','🎉','❤️','🧡','💜','🖤','💔','☕️','🍕','🎧','🚀','🌧','🌈','📌','✅','❌','⏳','💡','📎','🐈','🐕'];
-function emojiPop() {
-  const shell = $('.input-shell');
-  const old = shell.querySelector('.emoji-pop');
-  if (old) return old.remove();
-  const pop = h('div', { class: 'emoji-pop' }, EMOJI_SET.map(e => h('button', {
-    onclick: () => { insertAtCursor(e); pop.remove(); },
-  }, e)));
-  shell.append(pop);
-}
-function insertAtCursor(txt) {
-  const el = input(), p = el.selectionStart ?? el.value.length;
-  el.value = el.value.slice(0, p) + txt + el.value.slice(el.selectionEnd ?? p);
-  el.focus(); el.selectionStart = el.selectionEnd = p + txt.length;
-  autosize();
+function wireMic() {
+  const mic = $('#btn-mic');
+  let downAt = 0, sx = 0, cancelled = false;
+  mic.addEventListener('pointerdown', e => {
+    if (rec || starting) return;                 // already going, hands-free
+    e.preventDefault();
+    mic.setPointerCapture?.(e.pointerId);
+    downAt = Date.now(); sx = e.clientX; cancelled = false; held = true;
+    recUI('holding');
+    startRec();
+  });
+  mic.addEventListener('pointermove', e => {
+    if (!held || cancelled) return;
+    if (e.clientX - sx < -70) { cancelled = true; held = false; release('cancel'); toast('Discarded.'); }
+  });
+  const up = () => {
+    if (!held) return;
+    const ms = Date.now() - downAt;
+    held = false;
+    if (cancelled) return;
+    release(ms < 420 ? 'lock' : 'send');
+    if (ms < 420) toast('Recording hands-free. Send or discard when you are done.');
+  };
+  mic.addEventListener('pointerup', up);
+  mic.addEventListener('pointercancel', () => { if (held) { held = false; if (!cancelled) release('cancel'); } });
 }
 
 function mentionUI() {
@@ -331,12 +398,12 @@ function mentionUI() {
     onclick: () => {
       const handle = p.display_name.replace(/\s/g, '');
       el.value = el.value.slice(0, el.selectionStart - m[1].length - 1) + '@' + handle + ' ' + el.value.slice(el.selectionStart);
-      pop.hidden = true; el.focus(); autosize();
+      pop.hidden = true; el.focus(); autosize(); syncComposer();
     },
   }, h('div', { class: 'av', style: { width: '24px', height: '24px', fontSize: '10px' } }, initials(p.display_name)), p.display_name)));
 }
 
-/* ── scheduled send ────────────────────────────────────────────────────── */
+/* ── scheduled send ───────────────────────────────────────────────────── */
 function scheduleDialog() {
   const text = input().value.trim();
   const when = h('input', { type: 'datetime-local', value: new Date(Date.now() + 3600e3).toISOString().slice(0, 16) });
@@ -357,7 +424,7 @@ function scheduleDialog() {
               body: body.value.trim(), send_at: new Date(when.value).toISOString(),
               recurrence: rep.value || null,
             });
-            closeModal(); input().value = ''; autosize(); toast('Scheduled.');
+            closeModal(); input().value = ''; autosize(); syncComposer(); toast('Scheduled.');
           } catch (e) { oops(e); }
         },
       }, 'Schedule')));
@@ -365,22 +432,18 @@ function scheduleDialog() {
 
 export function mountComposer() {
   const el = input();
-  el.addEventListener('input', () => { autosize(); ping(); mentionUI(); });
+  el.addEventListener('input', () => { autosize(); syncComposer(); ping(); mentionUI(); });
   el.addEventListener('keydown', e => {
     if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); send(); }
     if (e.key === 'Escape') { S.replyTo = null; $('#reply-chip').hidden = true; $('#mention-pop').hidden = true; }
   });
   $('#btn-send').onclick = send;
   $('#btn-attach').onclick = attachMenu;
-  $('#btn-emoji').onclick = emojiPop;
-  $('#btn-schedule').onclick = scheduleDialog;
-
-  const mic = $('#btn-mic');
-  mic.addEventListener('pointerdown', startRec);
-  mic.addEventListener('pointerup', () => { if (rec) toast('Recording. Use Send or Discard.'); });
+  wireMic();
   $('#rec-pause').onclick = toggleRecPause;
   $('#rec-send').onclick = () => stopRec(true);
   $('#rec-cancel').onclick = () => stopRec(false);
+  syncComposer();
 
   $('#file-input').onchange = async e => {
     for (const f of e.target.files) { const item = await stageFile(f); if (item) S.pending.push(item); }
