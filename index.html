@@ -2,16 +2,22 @@
 <html lang="en" data-theme="light">
 <head>
 <meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content" />
 <title>Wisp</title>
 <link rel="manifest" href="/manifest.webmanifest" />
 <meta name="theme-color" content="#f6f2ec" />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Instrument+Sans:wght@400;500;600;700&family=Newsreader:opsz,wght@6..72,400;6..72,600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<!-- Eight typefaces, because the typeface is now a per-chat choice and not
+     just an account one. Atkinson Hyperlegible is here for the accessibility
+     option in Settings; "System" needs no download at all. -->
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Instrument+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&family=Nunito:wght@400;500;600;700&family=Newsreader:opsz,wght@6..72,400;6..72,600&family=JetBrains+Mono:wght@400;500&family=Atkinson+Hyperlegible:wght@400;700&display=swap" rel="stylesheet" />
 <link rel="stylesheet" href="/styles.css" />
 <!-- call-control chrome; after styles.css on purpose, it overrides it -->
 <link rel="stylesheet" href="/call.css" />
+<!-- the rebuilt chrome: composer, tab-bar glyphs, voice transport,
+     swipe-to-reply, Settings and the wallpaper picker. Last, so it wins. -->
+<link rel="stylesheet" href="/wisp-ui.css" />
 </head>
 <body>
 <div id="boot" class="boot"><div class="boot-mark">wisp</div></div>
@@ -129,19 +135,29 @@
 
       <div class="thread" id="thread"></div>
 
+      <!-- One long pill. Everything to do with *composing* lives inside it —
+           emoji, the field itself, attachments, the camera — and the only thing
+           outside is the one trailing action, which is the microphone until
+           there is something to send and the send button from the first
+           character on. That is what keeps the writing area the full width of
+           the column on a narrow phone instead of a stub between buttons. -->
       <footer class="composer" id="composer">
         <div class="reply-chip" id="reply-chip" hidden></div>
         <div class="attach-row" id="attach-row" hidden></div>
         <div class="composer-main">
-          <button class="icon-btn" id="btn-attach" title="Attach"><span class="ico">plus</span></button>
-          <div class="input-shell">
-            <textarea id="input" rows="1" placeholder="Message"></textarea>
+          <div class="input-shell" id="input-shell">
+            <button class="icon-btn" id="btn-emoji" type="button" title="Emoji and stickers"><span class="ico" data-size="21">smile</span></button>
+            <textarea id="input" rows="1" placeholder="Message" enterkeyhint="send"></textarea>
+            <button class="icon-btn" id="btn-attach" type="button" title="Attach"><span class="ico" data-size="21">plus</span></button>
+            <button class="icon-btn" id="btn-camera" type="button" title="Camera"><span class="ico" data-size="20">camera</span></button>
             <div class="mention-pop" id="mention-pop" hidden></div>
           </div>
-          <!-- exactly one of these is visible at a time: mic on an empty
-               composer, send the moment there is something to send -->
-          <button class="icon-btn rec" id="btn-mic" title="Hold to record, tap to record hands-free"><span class="ico">mic</span></button>
-          <button class="icon-btn send" id="btn-send" title="Send"><span class="ico">send</span></button>
+          <!-- both live in the markup and cross-fade in place, so the bar never
+               jitters as the first character is typed -->
+          <div class="trail">
+            <button class="icon-btn rec" id="btn-mic" title="Hold to record, tap to record hands-free"><span class="ico">mic</span></button>
+            <button class="icon-btn send" id="btn-send" title="Send"><span class="ico">send</span></button>
+          </div>
         </div>
         <div class="rec-strip" id="rec-strip" hidden>
           <span class="rec-dot" id="rec-dot"></span><span id="rec-time">0:00</span>
@@ -159,24 +175,32 @@
   <aside class="side" id="side" hidden></aside>
 
   <!-- Five destinations, no duplicates: your profile lives at the top of
-       Settings rather than in a second button next to the gear. -->
+       Settings rather than in a second button next to the gear. Each tab
+       carries both glyphs — outline for idle, solid for selected — and CSS
+       cross-fades between them, which is what makes the selected tab readable
+       at a glance rather than just slightly darker. -->
   <nav class="rail" id="rail" aria-label="Main">
     <div class="rail-nav" id="rail-nav" role="tablist">
       <span class="rail-glow" aria-hidden="true"></span>
       <button class="rail-btn is-on" role="tab" aria-selected="true" data-nav="chats">
-        <span class="ico">chat</span><span class="rail-label">Chats</span><b id="badge-unread" class="badge" hidden>0</b>
+        <span class="rail-glyph"><span class="ico glyph-off" data-size="23">chat</span><span class="ico glyph-on" data-size="23">chat-fill</span></span>
+        <span class="rail-label">Chats</span><b id="badge-unread" class="badge" hidden>0</b>
       </button>
       <button class="rail-btn" role="tab" aria-selected="false" data-nav="calls">
-        <span class="ico">call</span><span class="rail-label">Calls</span>
+        <span class="rail-glyph"><span class="ico glyph-off" data-size="23">call</span><span class="ico glyph-on" data-size="23">call-fill</span></span>
+        <span class="rail-label">Calls</span>
       </button>
       <button class="rail-btn" role="tab" aria-selected="false" data-nav="people">
-        <span class="ico">people</span><span class="rail-label">People</span>
+        <span class="rail-glyph"><span class="ico glyph-off" data-size="23">people</span><span class="ico glyph-on" data-size="23">people-fill</span></span>
+        <span class="rail-label">People</span>
       </button>
       <button class="rail-btn" role="tab" aria-selected="false" data-nav="saved">
-        <span class="ico">star</span><span class="rail-label">Saved</span>
+        <span class="rail-glyph"><span class="ico glyph-off" data-size="23">star</span><span class="ico glyph-on" data-size="23">star-fill</span></span>
+        <span class="rail-label">Saved</span>
       </button>
       <button class="rail-btn" role="tab" aria-selected="false" data-nav="settings">
-        <span class="ico">gear</span><span class="rail-label">Settings</span>
+        <span class="rail-glyph"><span class="ico glyph-off" data-size="23">gear</span><span class="ico glyph-on" data-size="23">gear-fill</span></span>
+        <span class="rail-label">Settings</span>
       </button>
     </div>
   </nav>
@@ -196,13 +220,17 @@
       </span>
       <span id="call-quality" class="quality"></span>
     </div>
+    <!-- what the suppressor is actually doing, live: the measured room level in
+         words, and how much it is taking off -->
+    <div class="dn-flag" id="dn-flag"><i></i><span id="dn-text"></span></div>
     <div class="share-flag">Sharing your screen</div>
   </div>
   <!-- filled 26px glyphs, mic and camera swap to their slashed twin when off
        (js/calls.js); voice calls hide the camera, video calls hide the
-       speaker, so either way this reads as four buttons -->
+       speaker, so either way this reads as a tidy row -->
   <div class="call-bar">
     <button class="round" id="call-mute" title="Mute"><span class="ico" data-size="26">mic-fill</span></button>
+    <button class="round" id="call-denoise" title="Noise suppression"><span class="ico" data-size="26">wave-bars</span></button>
     <button class="round" id="call-share" title="Share screen"><span class="ico" data-size="26">screen-fill</span></button>
     <button class="round" id="call-cam" title="Camera"><span class="ico" data-size="26">video-fill</span></button>
     <button class="round" id="call-speaker" title="Speaker"><span class="ico" data-size="26">speaker-fill</span></button>
