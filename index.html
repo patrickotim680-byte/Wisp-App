@@ -203,6 +203,10 @@
        (js/calls.js); voice calls hide the camera, video calls hide the
        speaker, so either way this reads as four buttons -->
   <div class="call-bar">
+    <svg class="call-glow-svg" aria-hidden="true">
+      <rect class="call-glow-base" x="0" y="0" width="100%" height="100%" rx="40" ry="40" pathLength="100"/>
+      <rect class="call-glow-rect" x="0" y="0" width="100%" height="100%" rx="40" ry="40" pathLength="100"/>
+    </svg>
     <button class="round" id="call-mute" title="Mute"><span class="ico" data-size="26">mic-fill</span></button>
     <button class="round" id="call-share" title="Share screen"><span class="ico" data-size="26">screen-fill</span></button>
     <button class="round" id="call-cam" title="Camera"><span class="ico" data-size="26">video-fill</span></button>
