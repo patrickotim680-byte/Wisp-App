@@ -5,6 +5,7 @@ import { $, $$, h, clear, esc, linkify, firstUrl, clock, dayLabel, dur, bytes, i
 import { attUrl, thumbUrl } from './media.js';
 import { openBody } from './crypto.js';
 import { getCachedThread, setCachedThread } from './cache.js';
+import { openCallDetails } from './calls.js';
 
 const PAGE = 80;
 let atBottom = true;
@@ -321,7 +322,23 @@ function renderBody(m, bub) {
     }
     case 'sticker': bub.append(h('div', { style: { fontSize: '54px', lineHeight: '1' } }, m.body)); break;
     case 'poll': pollView(m, bub); break;
-    case 'call': bub.append(h('div', {}, m.body)); break;
+    case 'call': {
+      // meta.kind is the real source of truth for voice vs video; the body
+      // text is only a fallback for call log rows written before meta.kind
+      // existed.
+      const kind = m.meta?.kind || (m.body?.startsWith('Video') ? 'video' : 'audio');
+      const row = h('div', {
+        class: 'call-row', onclick: e => {
+          e.stopPropagation();
+          openCallDetails({
+            name: S.chat?.name || 'Call', kind, state: m.meta?.state, duration: m.meta?.duration,
+            startedAt: m.created_at, chatId: S.chat?.chat_id, alreadyOpen: true,
+          });
+        },
+      }, iconEl(kind === 'video' ? 'video' : 'call', 16), h('span', {}, m.body));
+      bub.append(row);
+      break;
+    }
     default: bub.append(h('div', { html: linkify(m.body || '') }));
   }
 }
