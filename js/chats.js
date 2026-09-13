@@ -4,6 +4,7 @@ import { $, $$, h, clear, toast, oops, modal, closeModal, confirmBox, promptBox,
          longPress, shortWhen, initials, lastSeenText, iconEl, debounce, esc, setActiveNav, avatarData } from './util.js';
 import { applyChatStyle, applyWallpaper, applySettings, rememberChatStyle } from './theme.js';
 import { renderThread, appendMessage, patchStatus, patchReaction, loadMessages, applyCachedThread } from './thread.js';
+import { renderAttachRow } from './composer.js';
 import { notify } from './notify.js';
 import { getMemThread, warmCache } from './cache.js';
 
@@ -73,8 +74,8 @@ function matchesFolder(c) {
 const previewText = c => {
   if (c.locked) return 'Locked chat';
   if (c.e2ee && !c.last_body) return 'Encrypted message';
-  const kindWord = { image: '📷 Photo', video: '🎬 Video', voice: '🎙 Voice note', audio: '🎵 Audio',
-    document: '📄 Document', location: '📍 Location', contact: '👤 Contact', poll: '📊 Poll', call: '📞 Call' };
+  const kindWord = { image: 'Photo', video: 'Video', voice: 'Voice note', audio: 'Audio',
+    document: 'Document', location: 'Location', contact: 'Contact', poll: 'Poll', call: 'Call' };
   return c.last_body || kindWord[c.last_kind] || 'No messages yet';
 };
 
@@ -161,12 +162,15 @@ function chatMenu(c, at = {}) {
 
 export function closeChat() {
   S.chatToken++; // cancel any openChat() still resolving in the background
+  if (S.chat) S.pendingByChat.set(S.chat.chat_id, S.pending);
+  S.pending = [];
   S.chat = null; S.msgs = []; S.selection.clear(); S.msgsReady = false;
   drop('chat');
   $('#conv-inner').hidden = true;
   $('#conv-empty').hidden = false;
   $('#app').classList.remove('on-conv');
   applySettings();
+  renderAttachRow();
   renderChatList();
 }
 
@@ -194,6 +198,13 @@ export async function openChat(chatId) {
   // the fetch below resolved; on a slow connection that's the "opens Mercy,
   // shows the other chat's messages" bug. Now there's never a moment where
   // a chat you're not in is still visible.
+  // A staged-but-unsent photo belongs to the chat you attached it in — carry
+  // it out to pendingByChat before switching, and bring in whatever (if
+  // anything) is staged for the chat being opened, instead of leaving the
+  // old chat's attach-row preview showing on top of the new chat.
+  if (S.chat) S.pendingByChat.set(S.chat.chat_id, S.pending);
+  S.pending = S.pendingByChat.get(chatId) || [];
+
   S.chat = c; S.msgs = []; S.members = []; S.selection.clear(); S.replyTo = null;
   S.msgsReady = false;
   // This chat's own accent and wallpaper, right now, synchronously, before
@@ -214,6 +225,7 @@ export async function openChat(chatId) {
   $('#reply-chip').hidden = true;
   renderConvHeader();
   renderThread(true);
+  renderAttachRow();
 
   try {
     // Kick the message load off immediately, in parallel with the lookups
