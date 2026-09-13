@@ -273,16 +273,40 @@ async function startRec() {
     ctx.createMediaStreamSource(stream).connect(an);
     const buf = new Uint8Array(an.frequencyBinCount);
     const cv = $('#rec-wave');
-    rec = { mr, stream, chunks, peaks, ctx, t0: Date.now(), pausedAt: 0, pausedTotal: 0, paused: false };
+    const noiseDot = $('#noise-dot');
+    if (noiseDot) { noiseDot.className = 'noise-dot'; noiseDot.title = 'Background noise: checking…'; }
+    rec = {
+      mr, stream, chunks, peaks, ctx, t0: Date.now(), pausedAt: 0, pausedTotal: 0, paused: false,
+      noiseFloor: 0, noiseLevel: null, noiseSince: 0,
+    };
     recUI(held ? 'holding' : 'locked');
     setPauseUI(false);
     const tick = () => {
       if (!rec) return;
       if (!rec.paused) {
         an.getByteTimeDomainData(buf);
-        let peak = 0;
-        for (const v of buf) peak = Math.max(peak, Math.abs(v - 128) / 128);
+        let peak = 0, sumSq = 0;
+        for (const v of buf) { const s = (v - 128) / 128; peak = Math.max(peak, Math.abs(s)); sumSq += s * s; }
         peaks.push(Math.min(1, peak * 1.6));
+        // Ambient noise sits under the voice, in the gaps between words — so
+        // the floor should fall to a new quiet moment almost immediately but
+        // only rise slowly, otherwise a loud word reads as "the room got
+        // noisier" instead of "someone is talking over a quiet room".
+        const rms = Math.sqrt(sumSq / buf.length);
+        rec.noiseFloor += (rms - rec.noiseFloor) * (rms < rec.noiseFloor ? 0.3 : 0.01);
+        const raw = rec.noiseFloor < 0.02 ? 'quiet' : rec.noiseFloor < 0.05 ? 'some' : 'noisy';
+        const now = Date.now();
+        if (raw !== rec.pendingLevel) { rec.pendingLevel = raw; rec.pendingSince = now; }
+        // Require a level to hold for half a second before it's shown, so the
+        // dot reports the room, not the last quarter-second of audio.
+        if (rec.pendingLevel !== rec.noiseLevel && now - rec.pendingSince > 500) {
+          rec.noiseLevel = rec.pendingLevel;
+          if (noiseDot) {
+            noiseDot.className = 'noise-dot is-' + rec.noiseLevel;
+            noiseDot.title = 'Background noise: ' + (
+              rec.noiseLevel === 'quiet' ? 'quiet' : rec.noiseLevel === 'some' ? 'some noise' : 'noisy — try a quieter spot');
+          }
+        }
         $('#rec-time').textContent = dur((Date.now() - rec.t0 - rec.pausedTotal) / 1000);
       }
       const w = cv.width = cv.clientWidth, hh = cv.height = 28;
@@ -336,7 +360,7 @@ function setPauseUI(isPaused) {
 
 async function stopRec(sendIt) {
   if (!rec) return;
-  const { mr, stream, chunks, peaks, t0, ctx, pausedTotal, paused, pausedAt } = rec;
+  const { mr, stream, chunks, peaks, t0, ctx, pausedTotal, paused, pausedAt, noiseLevel } = rec;
   rec = null;
   held = false;
   recUI('off');
@@ -352,7 +376,7 @@ async function stopRec(sendIt) {
   const wave = [];
   for (let i = 0; i < peaks.length; i += step) wave.push(+peaks.slice(i, i + step).reduce((a, b) => Math.max(a, b), 0).toFixed(2));
   try {
-    const att = await uploadStaged(S.chat.chat_id, { kind: 'voice', blob, name: 'voice.webm', duration, waveform: wave });
+    const att = await uploadStaged(S.chat.chat_id, { kind: 'voice', blob, name: 'voice.webm', duration, waveform: wave, noiseLevel });
     await pushMessage({ kind: 'voice', attachment: att });
   } catch (e) { oops(e); }
 }
