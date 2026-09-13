@@ -226,7 +226,6 @@ function bubble(m, showAuthor) {
     m.edited_at && h('span', {}, 'edited'),
     S.starred.has(m.id) && h('span', {}, '★'),
     S.bookmarked.has(m.id) && h('span', {}, '🔖'),
-    m.expires_at && h('span', { title: 'disappears' }, '⏳'),
     h('span', {}, clock(m.created_at)),
     ticks(m));
   bub.append(foot);

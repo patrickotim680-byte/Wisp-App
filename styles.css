@@ -799,15 +799,26 @@ input[type="range"] { padding: 0; border: none; background: none; accent-color: 
 .call.audio .call-bar #call-cam { display: none }
 .call.video .call-bar #call-speaker { display: none }
 
-/* soft blue glow that rings the glass pill for the whole call, like FaceTime's
-   live-call halo — and spins once, faster, while the call winds down */
-.call-bar::before {
-  content: ''; position: absolute; inset: -4px; border-radius: inherit; z-index: -1;
-  background: conic-gradient(from 0deg, transparent 0deg, oklch(0.72 0.17 250 / 0.95) 55deg, transparent 130deg);
-  filter: blur(5px); opacity: 0.85;
-  animation: call-glow-spin 5s linear infinite;
+/* blue light that traces the pill's actual outline — a thin ring masked to
+   the border itself (not a blurred blob floating behind it) — with a soft
+   blurred twin behind it for the glow bleed, like FaceTime's live-call edge
+   light. Both spin slowly during the call and snap into a fast single spin
+   as it winds down. */
+.call-bar::before, .call-bar::after {
+  content: ''; position: absolute; border-radius: inherit; pointer-events: none;
+  background: conic-gradient(from 0deg, transparent 0deg, oklch(0.78 0.16 250) 28deg, transparent 66deg, transparent 360deg);
+  animation: call-glow-spin 4.5s linear infinite;
 }
-.call.hanging-up .call-bar::before { opacity: 1; animation: hangup-spin 0.7s linear; }
+.call-bar::before {
+  inset: -2px; z-index: 2; padding: 2px;
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+          mask-composite: exclude;
+}
+.call-bar::after {
+  inset: -9px; z-index: -1; filter: blur(11px); opacity: 0.9;
+}
+.call.hanging-up .call-bar::before, .call.hanging-up .call-bar::after { animation: hangup-spin 0.7s linear; }
 .call.hanging-up .call-bar { animation: hangup-fade 0.7s var(--ease) }
 @keyframes call-glow-spin { to { transform: rotate(360deg) } }
 @keyframes hangup-spin { to { transform: rotate(360deg) } }
