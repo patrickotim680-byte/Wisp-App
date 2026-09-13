@@ -16,7 +16,9 @@ export const S = {
   bookmarked: new Set(),
   selection: new Set(),
   replyTo: null,
-  pending: [],         // staged attachments
+  pending: [],         // staged attachments for whichever chat is open right now
+  pendingByChat: new Map(), // chat_id -> staged attachments, so a draft you started
+                             // in one chat doesn't follow you into the next one
   view: 'chats',
   folder: null,
   folders: [],
