@@ -496,6 +496,10 @@ input[type="range"] { padding: 0; border: none; background: none; accent-color: 
 .rec-strip.is-locked #rec-hint { display: none }
 .rec-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--danger); animation: pulse 1s infinite; flex: none }
 .rec-dot.paused { animation: none; background: var(--ink-2) }
+.noise-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; background: var(--ink-3); transition: background 0.3s var(--ease) }
+.noise-dot.is-quiet { background: var(--ink-3) }
+.noise-dot.is-some  { background: oklch(0.7 0.14 78) }
+.noise-dot.is-noisy { background: var(--danger) }
 .rec-strip #rec-pause { width: 34px; height: 34px; flex: none }
 .mention-pop { position: absolute; bottom: calc(100% + 6px); left: 0; background: var(--surface); border: 1px solid var(--line); border-radius: 14px; box-shadow: var(--lift); overflow: hidden; min-width: 220px; z-index: 5 }
 .mention-pop button { display: flex; gap: 8px; align-items: center; width: 100%; border: none; background: none; padding: 8px 12px; cursor: pointer; text-align: left; color: inherit }
