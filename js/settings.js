@@ -211,11 +211,16 @@ function notificationsSection() {
   return h('section', {},
     h('h3', {}, 'Notifications'),
     row('Preview', selectBox([['full', 'Sender and message'], ['sender_only', 'Sender only'], ['hidden', 'Just “New message”']], s.notif_preview, v => saveSettings({ notif_preview: v }))),
-    row('Sound', h('div', { class: 'row-btns' },
+    row('Message sound', h('div', { class: 'row-btns' },
       selectBox([['chime', 'Chime'], ['knock', 'Knock'], ['pop', 'Pop'], ['none', 'Silent']], s.notif_sound, v => saveSettings({ notif_sound: v })),
       h('button', { class: 'btn small ghost', onclick: async () => (await import('./notify.js')).playSound() }, 'Test'))),
-    row('Custom sound', h('button', { class: 'btn small', onclick: () => filePick('audio/*', f => uploadPublic('sounds', f, 'notif_sound').then(() => toast('Custom sound saved'))) }, 'Upload'),
+    row('Custom message sound', h('button', { class: 'btn small', onclick: () => filePick('audio/*', f => uploadPublic('sounds', f, 'notif_sound').then(() => toast('Custom sound saved'))) }, 'Upload'),
       'Uploaded tones are stored per account and play on this and every other device.'),
+    row('Call sound', h('div', { class: 'row-btns' },
+      selectBox([['ring', 'Classic ring'], ['marimba', 'Marimba'], ['pulse', 'Pulse'], ['none', 'Silent']], s.call_sound ?? 'ring', v => saveSettings({ call_sound: v })),
+      h('button', { class: 'btn small ghost', onclick: async () => (await import('./notify.js')).playCallTone() }, 'Test')),
+      'Plays for incoming calls, and while an outgoing call is ringing.'),
+    row('Custom call sound', h('button', { class: 'btn small', onclick: () => filePick('audio/*', f => uploadPublic('sounds', f, 'call_sound').then(() => toast('Custom call sound saved'))) }, 'Upload')),
     row('Permission', h('button', {
       class: 'btn small', onclick: async () => { const ok = await (await import('./notify.js')).askPermission(); toast(ok ? 'Granted' : 'Denied'); },
     }, Notification.permission)));

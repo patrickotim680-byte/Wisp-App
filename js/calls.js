@@ -13,7 +13,7 @@
 import { sb, rpc, ins, upd, sel, channel, drop } from './db.js';
 import { S, person, nameOf } from './state.js';
 import { $, h, clear, toast, oops, dur, iconEl, initials, swapIcon, modal, closeModal, clock, dayLabel } from './util.js';
-import { playSound } from './notify.js';
+import { playCallTone, startRing, stopRing, notifyIncomingCall } from './notify.js';
 
 let ice = [{ urls: 'stun:stun.l.google.com:19302' }];
 export function setIceServers(list) { if (list?.length) ice = list; }
@@ -116,7 +116,7 @@ function newPeer(otherId) {
     }
   };
   pc.onconnectionstatechange = () => {
-    if (pc.connectionState === 'connected') { ui.state().textContent = 'Connected'; startTimer(); ui.root().classList.add('connected'); }
+    if (pc.connectionState === 'connected') { ui.state().textContent = 'Connected'; startTimer(); ui.root().classList.add('connected'); stopRing(); }
     if (['failed', 'closed'].includes(pc.connectionState)) hangup('failed');
   };
   return p;
@@ -141,6 +141,7 @@ export async function startCall(kind) {
     resetControls();
     show(true);
     listenSignals();
+    startRing(3500); // ringback — stops the instant either side connects or the call ends
     // No hand-rolled offer here: adding the local tracks in newPeer() fires
     // onnegotiationneeded, which is also the path every later renegotiation
     // (screen share on, screen share off, camera added) travels down.
@@ -157,20 +158,20 @@ export async function incoming(row) {
   if (row.caller_id === S.me.id) return;
   const chat = S.chats.find(c => c.chat_id === row.chat_id);
   call = { id: row.id, chat_id: row.chat_id, kind: row.kind, role: 'callee', answered: false, queued: [] };
-  ui.who().textContent = chat?.name || nameOf(row.caller_id);
+  const who = chat?.name || nameOf(row.caller_id);
+  ui.who().textContent = who;
   ui.state().textContent = `Incoming ${row.kind} call`;
-  setPeerVisual(chat?.name || nameOf(row.caller_id), chat?.icon_url);
+  setPeerVisual(who, chat?.icon_url);
   resetControls();
   show(true);
-  playSound();
-  const ring = setInterval(playSound, 2500);
-  call.ring = ring;
+  startRing(2500);
+  notifyIncomingCall(who, row.kind, row.chat_id);
   listenSignals();
 }
 
 async function accept() {
   if (!call) return;
-  clearInterval(call.ring);
+  stopRing();
   call.answered = true;
   await getLocal(call.kind);
   await upd('calls', { state: 'accepted', answered_at: new Date().toISOString() }, { id: call.id });
@@ -202,7 +203,7 @@ async function onSignal(from, p) {
       await pc.setLocalDescription();
       signal({ type: 'answer', sdp: pc.localDescription }, from);
     } else {
-      call.answered = true;
+      call.answered = true; stopRing();
     }
     return;
   }
@@ -273,7 +274,7 @@ function watchQuality() {
 export async function hangup(reason = 'ended') {
   if (!call) return show(false);
   const id = call.id, t0 = call.t0;
-  clearInterval(call.timer); clearInterval(call.ring); clearInterval(statsTimer);
+  clearInterval(call.timer); clearInterval(statsTimer); stopRing();
   try { await signal({ type: 'bye' }); } catch {}
   peers.forEach(({ pc }) => pc.close());
   peers.clear();

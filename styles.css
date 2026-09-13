@@ -809,7 +809,8 @@ input[type="range"] { padding: 0; border: none; background: none; accent-color: 
    ring, then fades out completely. .call-bar is already position:absolute
    above, which is what the glow svg positions itself against. */
 .call-glow-svg {
-  position: absolute; inset: -3px; z-index: 0; overflow: visible; pointer-events: none;
+  position: absolute; inset: -3px; width: calc(100% + 6px); height: calc(100% + 6px);
+  z-index: 0; overflow: visible; pointer-events: none;
   filter: drop-shadow(0 0 3px oklch(0.8 0.16 250 / 0.9)) drop-shadow(0 0 10px oklch(0.7 0.17 250 / 0.65));
   transition: opacity 0.3s var(--ease);
 }
