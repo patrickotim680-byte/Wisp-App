@@ -316,12 +316,53 @@ function accountSection() {
     }, 'Delete account'));
 }
 
+/* ── grouped categories ───────────────────────────────────────────
+   Same section builders as before, none of them touched — just sorted
+   into the groups a messenger settings screen actually has, each
+   collapsed until tapped. `openCat` survives re-renders: an accent
+   pick, a PIN toggle, forgetting a device, etc. all call openSettings()
+   again to reflect the change, and this stops that from slamming the
+   panel shut on the user mid-edit. Only the open category's content is
+   built, so Security's device/key fetch doesn't run on every render. */
+const CATEGORIES = [
+  { key: 'account', icon: 'person', tint: 'oklch(0.6 0.03 70)', title: 'Account', sub: 'Export data, sign out, delete account', build: () => accountSection() },
+  { key: 'security', icon: 'key', tint: 'oklch(0.55 0.13 38)', title: 'Security', sub: 'Two-step PIN, encryption, devices', build: () => securitySection() },
+  { key: 'privacy', icon: 'shield', tint: 'oklch(0.52 0.11 148)', title: 'Privacy', sub: 'Last seen, read receipts, blocked contacts', build: () => privacySection() },
+  { key: 'chats', icon: 'palette', tint: 'oklch(0.5 0.14 274)', title: 'Chats', sub: 'Theme, accent, wallpaper, text size', build: () => appearanceSection() },
+  { key: 'notifications', icon: 'bell', tint: 'oklch(0.63 0.13 78)', title: 'Notifications', sub: 'Sound, previews, focus mode, quiet hours', build: () => h('div', { class: 'stack' }, notificationsSection(), focusSection()) },
+  { key: 'accessibility', icon: 'sliders', tint: 'oklch(0.47 0.05 250)', title: 'Accessibility', sub: 'Motion, contrast, animation speed', build: () => accessibilitySection() },
+];
+let openCat = null;
+
+function categoryRow(cfg) {
+  const isOpen = openCat === cfg.key;
+  const inner = h('div', { class: 'cat-body-inner' });
+  const body = h('div', { class: 'cat-body' }, inner);
+  const item = h('div', { class: 'cat-item' + (isOpen ? ' is-open' : ''), dataset: { cat: cfg.key } });
+  const chev = iconEl('chevron', 18);
+  chev.classList.add('cat-chevron');
+  const btn = h('button', {
+    type: 'button', class: 'cat-row', 'aria-expanded': String(isOpen),
+    onclick: () => { openCat = isOpen ? null : cfg.key; openSettings(); },
+  },
+    h('span', { class: 'cat-icon', style: { background: cfg.tint } }, iconEl(cfg.icon, 18)),
+    h('div', { class: 'cat-row-main' }, h('b', {}, cfg.title), h('small', {}, cfg.sub)),
+    chev);
+  item.append(btn, body);
+  return item;
+}
+
 export async function openSettings() {
+  const items = CATEGORIES.map(categoryRow);
   const wrap = h('div', {},
     h('div', { class: 'side-head' }, h('h3', { class: 'display' }, 'Settings'),
-      h('button', { class: 'btn small ghost', onclick: () => openSide(null) }, 'Close')),
-    profileHero(), appearanceSection(), notificationsSection(), focusSection(),
-    privacySection(), accessibilitySection(), accountSection());
+      h('button', { class: 'btn small ghost', onclick: () => { openCat = null; openSide(null); } }, 'Close')),
+    profileHero(),
+    h('div', { class: 'cat-list' }, items));
   openSide(wrap);
-  wrap.insertBefore(await securitySection(), wrap.lastChild);
+  const activeCfg = CATEGORIES.find(c => c.key === openCat);
+  if (activeCfg) {
+    const inner = wrap.querySelector(`.cat-item[data-cat="${openCat}"] .cat-body-inner`);
+    inner.append(await activeCfg.build());
+  }
 }
