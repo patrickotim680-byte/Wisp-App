@@ -113,10 +113,7 @@ export function renderChatList() {
         h('div', { class: 'row-prev' }, previewText(c))),
       h('div', { class: 'row-side' },
         h('span', {}, shortWhen(c.last_at)),
-        h('div', { class: 'dot-row' },
-          c.unread > 0 && h('b', { class: 'pill' }, String(c.unread)),
-          c.muted && '🔇', c.locked && '🔒', c.disappear_seconds > 0 && '⏳',
-          c.e2ee && '🔐')));
+        c.unread > 0 && h('div', { class: 'dot-row' }, h('b', { class: 'pill' }, String(c.unread)))));
     longPress(row, at => chatMenu(c, at));
     body.append(row);
     if (p?.is_online) row.querySelector('.row-name').append(' ', h('span', { class: 'online-dot', title: 'online' }));
@@ -278,7 +275,7 @@ export function renderConvHeader() {
   if (typers.length) sub = typers.length === 1 ? `${person(typers[0])?.display_name?.split(' ')[0] || 'Someone'} is typing\u2026` : `${typers.length} people typing\u2026`;
   else if (c.type === 'dm') sub = lastSeenText(p) || (p?.about ?? '');
   else sub = S.members.map(m => m.user_id === S.me.id ? 'You' : (person(m.user_id)?.display_name || '')).filter(Boolean).slice(0, 6).join(', ');
-  $('#conv-sub').textContent = [c.e2ee ? '🔐' : '', c.disappear_seconds ? '⏳' : '', sub].filter(Boolean).join(' ');
+  $('#conv-sub').textContent = sub;
   $('#btn-call-video').hidden = c.type === 'broadcast';
   $('#btn-call-audio').hidden = c.type === 'broadcast';
 }
