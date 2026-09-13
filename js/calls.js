@@ -12,7 +12,7 @@
 // call could land mid-handshake with nothing to resolve the glare.
 import { sb, rpc, ins, upd, sel, channel, drop } from './db.js';
 import { S, person, nameOf } from './state.js';
-import { $, h, clear, toast, oops, dur, iconEl, initials, swapIcon } from './util.js';
+import { $, h, clear, toast, oops, dur, iconEl, initials, swapIcon, modal, closeModal, clock, dayLabel } from './util.js';
 import { playSound } from './notify.js';
 
 let ice = [{ urls: 'stun:stun.l.google.com:19302' }];
@@ -289,7 +289,10 @@ export async function hangup(reason = 'ended') {
       await ins('messages', {
         chat_id: call.chat_id, sender_id: S.me.id, kind: 'call',
         body: `${call.kind === 'video' ? 'Video' : 'Voice'} call · ${state}${duration ? ' · ' + dur(duration) : ''}`,
-        meta: { call_id: id, state, duration },
+        // call.kind travels in meta now (not just baked into the body text)
+        // so the bubble's tap handler can rebuild a proper call-details view
+        // — voice vs video, call back, etc. — without parsing the string.
+        meta: { call_id: id, state, duration, kind: call.kind },
       });
     }
   } catch {}
@@ -441,4 +444,44 @@ export function mountCalls() {
 export async function callHistory() {
   const rows = await sel('calls', { select: '*, chats(name, type)', order: ['started_at', 'desc'], limit: 80 });
   return rows;
+}
+
+/* ── call details sheet ──────────────────────────────────────────────────
+   Both the Calls tab and the in-thread "Voice call · declined" bubble open
+   this instead of just jumping into the chat: it shows exactly when the
+   call happened, and offers the actions someone actually wants from a call
+   log entry — message back, call back (audio or video), or schedule a
+   message — as one tap each instead of two or three. */
+const CALL_STATE_LABEL = { missed: 'Missed', declined: 'Declined', ended: 'Ended',
+  accepted: 'In progress', ringing: 'Ringing', failed: 'Failed' };
+
+export function openCallDetails({ name, kind, state, duration, startedAt, chatId, alreadyOpen }) {
+  const isVideo = kind === 'video';
+  const label = CALL_STATE_LABEL[state] || state || '';
+  const chatStillThere = !chatId || S.chats.some(c => c.chat_id === chatId);
+
+  const withChatOpen = async fn => {
+    closeModal();
+    if (!chatStillThere) return toast('That chat is no longer available.', true);
+    if (!alreadyOpen) await (await import('./chats.js')).openChat(chatId);
+    fn();
+  };
+
+  modal(...[
+    h('div', { class: 'call-detail-head' },
+      h('div', { class: 'av lg' }, iconEl(isVideo ? 'video' : 'call', 22)),
+      h('div', {},
+        h('h3', { class: 'display' }, name || 'Call'),
+        h('p', { class: 'muted' }, `${isVideo ? 'Video' : 'Voice'} call${label ? ' · ' + label : ''}${duration ? ' · ' + dur(duration) : ''}`))),
+    startedAt && h('p', { class: 'hint' }, `${dayLabel(startedAt)} at ${clock(startedAt)}`),
+    h('div', { class: 'modal-actions call-detail-actions' },
+      !alreadyOpen && h('button', { class: 'btn icon-label', onclick: () => withChatOpen(() => {}) }, iconEl('chat', 16), 'Message'),
+      h('button', { class: 'btn icon-label', onclick: () => withChatOpen(() => startCall('audio')) }, iconEl('call', 16), 'Voice call'),
+      h('button', { class: 'btn icon-label', onclick: () => withChatOpen(() => startCall('video')) }, iconEl('video', 16), 'Video call'),
+      h('button', {
+        class: 'btn icon-label',
+        onclick: () => withChatOpen(async () => (await import('./composer.js')).scheduleDialog()),
+      }, iconEl('clock', 16), 'Schedule message'),
+      h('button', { class: 'btn ghost', onclick: closeModal }, 'Close')),
+  ].filter(Boolean));
 }

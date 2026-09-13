@@ -574,7 +574,15 @@ export async function viewCalls(tab = 'all') {
     const name = chatMeta?.name || r.chats?.name || (out ? 'Outgoing call' : 'Incoming call');
     const label = { missed: 'Missed', declined: 'Declined', ended: out ? 'Outgoing' : 'Incoming', accepted: 'In progress', ringing: 'Ringing', failed: 'Failed' }[r.state];
     body.append(h('button', {
-      class: 'row', onclick: async () => { const hit = S.chats.find(c => c.chat_id === r.chat_id); if (hit) (await import('./chats.js')).openChat(r.chat_id); },
+      // Used to just open the chat. Now it opens a details sheet with the
+      // exact call time plus message/call-back/schedule actions, so seeing
+      // "who called and when" and acting on it doesn't require two taps.
+      class: 'row', onclick: async () => {
+        (await import('./calls.js')).openCallDetails({
+          name, kind: r.kind, state: r.state, duration: r.duration,
+          startedAt: r.started_at, chatId: r.chat_id, alreadyOpen: S.chat?.chat_id === r.chat_id,
+        });
+      },
     }, h('div', { class: 'av' }, iconEl(r.kind === 'video' ? 'video' : 'call', 19)),
       h('div', { class: 'row-main' },
         h('div', { class: 'row-top' }, h('span', { class: 'row-name' }, name)),

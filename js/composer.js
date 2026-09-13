@@ -161,17 +161,9 @@ function attachMenu(e) {
     { label: 'Location', icon: 'globe', onclick: shareLocation },
     { label: 'Contact card', icon: 'person', onclick: shareContact },
     { label: 'Poll', icon: 'sliders', onclick: createPoll },
-    { label: 'Sticker', icon: 'smile', onclick: stickerPicker },
     { sep: true },
     { label: 'Schedule this message', icon: 'clock', onclick: scheduleDialog },
   ], { anchor: e.currentTarget, title: 'Attach' });
-}
-
-const STICKERS = ['🫠', '🙃', '🫡', '🤌', '🐈', '🌵', '🍜', '☕️', '🛟', '🧊', '🪩', '📮', '🛼', '🧃', '🪴', '🫧'];
-function stickerPicker() {
-  modal(h('h3', { class: 'display' }, 'Stickers'),
-    h('div', { class: 'sticker-grid' },
-      STICKERS.map(s => h('button', { class: 'sticker', onclick: async () => { closeModal(); await pushMessage({ kind: 'sticker', body: s }); } }, s))));
 }
 
 async function shareLocation() {
@@ -428,7 +420,7 @@ function mentionUI() {
 }
 
 /* ── scheduled send ───────────────────────────────────────────────────── */
-function scheduleDialog() {
+export function scheduleDialog() {
   const text = input().value.trim();
   const when = h('input', { type: 'datetime-local', value: new Date(Date.now() + 3600e3).toISOString().slice(0, 16) });
   const rep = h('select', {}, h('option', { value: '' }, 'Once'), h('option', { value: 'daily' }, 'Daily'),

@@ -453,9 +453,6 @@ input[type="range"] { padding: 0; border: none; background: none; accent-color: 
 .poll-opt { display: grid; gap: 3px; cursor: pointer }
 .poll-bar { height: 6px; border-radius: 999px; background: color-mix(in oklab, currentColor 18%, transparent); overflow: hidden }
 .poll-bar i { display: block; height: 100%; background: currentColor; opacity: 0.6 }
-.sticker-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px }
-.sticker { border: 1px solid var(--line-soft); background: var(--surface); border-radius: 14px; font-size: 32px; padding: 8px; cursor: pointer }
-.sticker:hover { background: var(--sunken) }
 
 /* ── composer ──────────────────────────────────────────────────── */
 .composer {
@@ -467,13 +464,21 @@ input[type="range"] { padding: 0; border: none; background: none; accent-color: 
   padding: 8px 12px 10px; display: grid; gap: 8px;
 }
 .composer-main { display: flex; align-items: flex-end; gap: 6px }
-.input-shell { flex: 1; position: relative }
-/* Same footprint as #btn-send / #btn-mic (42px, .icon-btn.send/.icon-btn.rec)
-   so the row's shared bottom edge doesn't leave attach sitting 2px lower. */
-#btn-attach { width: 42px; height: 42px; flex: none }
+/* Attach now lives inside the same pill as the text field — one continuous
+   shape, not a separate circular button floating beside it — so the pill
+   itself carries the background/radius and #input goes transparent. */
+.input-shell {
+  flex: 1; position: relative; display: flex; align-items: flex-end;
+  background: var(--sunken); border-radius: 22px;
+  transition: background 0.15s var(--ease);
+}
+.input-shell #btn-attach {
+  flex: none; width: 36px; height: 36px; margin: 3px 0 3px 3px; border-radius: 50%; color: var(--ink-2);
+}
+.input-shell #btn-attach:hover { background: var(--line-soft); color: var(--ink); }
 #input {
-  width: 100%; resize: none; max-height: 180px; border-radius: 20px;
-  background: var(--sunken); border-color: transparent; padding: 10px 15px;
+  width: 100%; resize: none; max-height: 180px; border-radius: 22px;
+  background: transparent; border-color: transparent; padding: 10px 14px 10px 4px;
 }
 /* One trailing button, never two: the microphone until there is something to
    send, the send button from the first character on. */
@@ -813,6 +818,20 @@ dialog { border: none; border-radius: 22px; padding: 0; background: var(--surfac
 dialog::backdrop { background: oklch(0.2 0.01 70 / 0.44); backdrop-filter: blur(3px) }
 #modal-body { padding: 24px; display: grid; gap: 14px }
 .modal-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 4px; flex-wrap: wrap }
+
+/* ── call details sheet ────────────────────────────────────────── */
+.call-detail-head { display: flex; gap: 12px; align-items: center }
+.call-detail-head h3 { margin: 0 }
+.call-detail-head p { margin: 2px 0 0 }
+.av.lg { width: 52px; height: 52px; font-size: 1.1em }
+.call-detail-actions { justify-content: flex-start }
+.btn.icon-label { display: inline-flex; align-items: center; gap: 7px }
+.btn.icon-label svg { flex: none }
+/* The call-log bubble in-thread ("Voice call · declined") is now a tap
+   target of its own — same details sheet as the Calls tab — so it gets a
+   pointer and a hover state instead of reading as static text. */
+.call-row { display: flex; align-items: center; gap: 8px; cursor: pointer; padding: 2px 0 }
+.call-row:hover { opacity: 0.8 }
 .digest { display: grid; gap: 12px }
 .digest-nums { display: flex; gap: 22px; flex-wrap: wrap }
 .digest-nums div { display: grid }
