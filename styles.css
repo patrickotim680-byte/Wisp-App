@@ -445,7 +445,7 @@ input[type="range"] { padding: 0; border: none; background: none; accent-color: 
 .doc-glyph { width: 34px; height: 34px; border-radius: 9px; background: color-mix(in oklab, currentColor 14%, transparent); display: grid; place-items: center; font-size: 0.7em; font-weight: 700 }
 .voice { display: flex; align-items: center; gap: 9px; min-width: 220px }
 .voice canvas { flex: 1; height: 28px }
-.voice .rate { font-size: 0.75em; border: 1px solid currentColor; border-radius: 999px; padding: 0 6px; background: none; cursor: pointer; opacity: 0.75 }
+.voice small { font-size: 0.75em; opacity: 0.75; flex: none }
 .preview-card { display: grid; gap: 2px; border: 1px solid color-mix(in oklab, currentColor 18%, transparent); border-radius: 10px; padding: 8px; margin-top: 6px; font-size: 0.85em }
 .preview-card b { font-size: 0.95em }
 .viewonce { display: flex; gap: 8px; align-items: center; font-style: italic; opacity: 0.9 }
@@ -799,14 +799,17 @@ input[type="range"] { padding: 0; border: none; background: none; accent-color: 
 .call.audio .call-bar #call-cam { display: none }
 .call.video .call-bar #call-speaker { display: none }
 
-/* smooth glow that spins once around the glass pill while a call winds down */
+/* soft blue glow that rings the glass pill for the whole call, like FaceTime's
+   live-call halo — and spins once, faster, while the call winds down */
 .call-bar::before {
   content: ''; position: absolute; inset: -4px; border-radius: inherit; z-index: -1;
-  background: conic-gradient(from 0deg, transparent 0deg, oklch(0.63 0.19 25 / 0.9) 55deg, transparent 130deg);
-  filter: blur(5px); opacity: 0;
+  background: conic-gradient(from 0deg, transparent 0deg, oklch(0.72 0.17 250 / 0.95) 55deg, transparent 130deg);
+  filter: blur(5px); opacity: 0.85;
+  animation: call-glow-spin 5s linear infinite;
 }
 .call.hanging-up .call-bar::before { opacity: 1; animation: hangup-spin 0.7s linear; }
 .call.hanging-up .call-bar { animation: hangup-fade 0.7s var(--ease) }
+@keyframes call-glow-spin { to { transform: rotate(360deg) } }
 @keyframes hangup-spin { to { transform: rotate(360deg) } }
 @keyframes hangup-fade { 0%, 70% { opacity: 1 } 100% { opacity: 0.55 } }
 

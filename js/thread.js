@@ -358,9 +358,8 @@ function voicePlayer(m, bub) {
   const btn = h('button', { class: 'icon-btn' });
   btn.innerHTML = '';
   btn.append(iconEl('play', 18));
-  const rate = h('button', { class: 'rate' }, '1×');
   const time = h('small', {}, dur(a.duration || 0));
-  const row = h('div', { class: 'voice' }, btn, cv, time, rate);
+  const row = h('div', { class: 'voice' }, btn, cv, time);
   bub.append(row);
   const peaks = a.waveform || [];
   const draw = (p = 0) => {
@@ -383,18 +382,11 @@ function voicePlayer(m, bub) {
     e.stopPropagation();
     if (!audio) {
       audio = new Audio(await attUrl(a));
-      audio.playbackRate = +rate.textContent.replace('×', '');
       audio.ontimeupdate = () => { draw(audio.currentTime / (audio.duration || 1)); time.textContent = dur(audio.currentTime); };
       audio.onended = () => { btn.innerHTML = ''; btn.append(iconEl('play', 18)); draw(0); time.textContent = dur(a.duration || 0); };
     }
     if (audio.paused) { audio.play(); btn.innerHTML = ''; btn.append(iconEl('pause', 18)); }
     else { audio.pause(); btn.innerHTML = ''; btn.append(iconEl('play', 18)); }
-  };
-  rate.onclick = e => {
-    e.stopPropagation();
-    const next = { '1×': '1.5×', '1.5×': '2×', '2×': '1×' }[rate.textContent];
-    rate.textContent = next;
-    if (audio) audio.playbackRate = +next.replace('×', '');
   };
   if (m.meta?.transcript) bub.append(h('div', { class: 'hint', style: { marginTop: '4px' } }, '“' + m.meta.transcript + '”'));
 }
