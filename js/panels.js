@@ -549,21 +549,35 @@ function personMenu(p, at) {
   ], { ...at, title: p.nickname || p.display_name });
 }
 
-export async function viewCalls() {
+export async function viewCalls(tab = 'all') {
   const body = clear($('#list-body'));
   $('#list-title').textContent = 'Calls';
-  clear($('#folders'));
-  const rows = await (await import('./calls.js')).callHistory();
-  if (!rows.length) return void body.append(h('div', { class: 'empty' }, h('p', {}, 'No calls yet'),
+  const chips = clear($('#folders'));
+  [['all', 'All'], ['missed', 'Missed'], ['outgoing', 'Outgoing'], ['incoming', 'Incoming']].forEach(([k, l]) =>
+    chips.append(h('button', { class: 'chip' + (tab === k ? ' is-on' : ''), onclick: () => viewCalls(k) }, l)));
+  const allRows = await (await import('./calls.js')).callHistory();
+  const rows = allRows.filter(r => {
+    if (tab === 'all') return true;
+    if (tab === 'missed') return r.state === 'missed';
+    const out = r.caller_id === S.me.id;
+    return tab === 'outgoing' ? out : !out;
+  });
+  if (!rows.length) return void body.append(h('div', { class: 'empty' },
+    h('p', {}, tab === 'all' ? 'No calls yet' : `No ${tab} calls`),
     h('p', { class: 'hint' }, 'Voice and video calls you make show up here.')));
   rows.forEach(r => {
     const out = r.caller_id === S.me.id;
+    // r.chats.name only exists for named group chats; for a DM it's null in
+    // the raw table, so fall back to the same chat_overview() name the main
+    // Chats list already resolved for this chat (person's real display name).
+    const chatMeta = S.chats.find(x => x.chat_id === r.chat_id);
+    const name = chatMeta?.name || r.chats?.name || (out ? 'Outgoing call' : 'Incoming call');
     const label = { missed: 'Missed', declined: 'Declined', ended: out ? 'Outgoing' : 'Incoming', accepted: 'In progress', ringing: 'Ringing', failed: 'Failed' }[r.state];
     body.append(h('button', {
       class: 'row', onclick: async () => { const hit = S.chats.find(c => c.chat_id === r.chat_id); if (hit) (await import('./chats.js')).openChat(r.chat_id); },
     }, h('div', { class: 'av' }, iconEl(r.kind === 'video' ? 'video' : 'call', 19)),
       h('div', { class: 'row-main' },
-        h('div', { class: 'row-top' }, h('span', { class: 'row-name' }, r.chats?.name || (out ? 'Outgoing call' : 'Incoming call'))),
+        h('div', { class: 'row-top' }, h('span', { class: 'row-name' }, name)),
         h('div', { class: 'row-prev', style: r.state === 'missed' ? { color: 'var(--danger)' } : {} },
           `${label}${r.duration ? ' · ' + dur(r.duration) : ''}`)),
       h('div', { class: 'row-side' }, shortWhen(r.started_at))));
