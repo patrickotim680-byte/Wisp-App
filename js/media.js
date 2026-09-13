@@ -76,6 +76,7 @@ export async function uploadStaged(chatId, item) {
     bucket, path, thumb, name: item.name, mime: item.blob.type || 'application/octet-stream',
     size: item.blob.size, w: item.w || null, h: item.h || null,
     duration: item.duration || null, waveform: item.waveform || null,
+    noise_level: item.noiseLevel || null,
   };
 }
 
