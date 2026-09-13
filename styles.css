@@ -802,27 +802,33 @@ input[type="range"] { padding: 0; border: none; background: none; accent-color: 
 /* blue light that traces the pill's actual outline — a thin ring masked to
    the border itself (not a blurred blob floating behind it) — with a soft
    blurred twin behind it for the glow bleed, like FaceTime's live-call edge
-   light. Both spin slowly during the call and snap into a fast single spin
-   as it winds down. */
-.call-bar::before, .call-bar::after {
-  content: ''; position: absolute; border-radius: inherit; pointer-events: none;
-  background: conic-gradient(from 0deg, transparent 0deg, oklch(0.78 0.16 250) 28deg, transparent 66deg, transparent 360deg);
-  animation: call-glow-spin 4.5s linear infinite;
+   light. Uses box-shadow (not a masked pseudo-element) so it always follows
+   the pill's exact rounded shape with no rendering quirks, and pulses gently
+   during the call, then flares once and fades out as it winds down. */
+.call-bar {
+  animation: call-glow-breathe 2.6s ease-in-out infinite;
 }
-.call-bar::before {
-  inset: -2px; z-index: 2; padding: 2px;
-  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
-  -webkit-mask-composite: xor;
-          mask-composite: exclude;
+@keyframes call-glow-breathe {
+  0%, 100% {
+    box-shadow: 0 0 0 1.5px oklch(0.75 0.16 250 / 0.7),
+                0 0 16px 3px oklch(0.7 0.17 250 / 0.4),
+                0 0 30px 8px oklch(0.68 0.17 250 / 0.2);
+  }
+  50% {
+    box-shadow: 0 0 0 1.5px oklch(0.8 0.16 250 / 1),
+                0 0 22px 5px oklch(0.72 0.17 250 / 0.62),
+                0 0 40px 12px oklch(0.68 0.17 250 / 0.3);
+  }
 }
-.call-bar::after {
-  inset: -9px; z-index: -1; filter: blur(11px); opacity: 0.9;
+.call.hanging-up .call-bar { animation: call-glow-hangup 0.7s var(--ease) forwards; }
+@keyframes call-glow-hangup {
+  0% {
+    box-shadow: 0 0 0 1.5px oklch(0.82 0.17 250 / 1),
+                0 0 26px 6px oklch(0.72 0.17 250 / 0.75),
+                0 0 46px 14px oklch(0.68 0.17 250 / 0.4);
+  }
+  100% { box-shadow: 0 0 0 0 transparent, 0 0 0 0 transparent, 0 0 0 0 transparent; }
 }
-.call.hanging-up .call-bar::before, .call.hanging-up .call-bar::after { animation: hangup-spin 0.7s linear; }
-.call.hanging-up .call-bar { animation: hangup-fade 0.7s var(--ease) }
-@keyframes call-glow-spin { to { transform: rotate(360deg) } }
-@keyframes hangup-spin { to { transform: rotate(360deg) } }
-@keyframes hangup-fade { 0%, 70% { opacity: 1 } 100% { opacity: 0.55 } }
 
 /* ── misc ─────────────────────────────────────────────────────── */
 .toasts { position: fixed; bottom: calc(20px + env(safe-area-inset-bottom, 0px)); left: 50%; transform: translateX(-50%); display: grid; gap: 8px; z-index: 80; pointer-events: none }
