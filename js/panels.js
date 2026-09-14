@@ -1,7 +1,8 @@
 import { sb, rpc, sel, ins, upd, del, upload } from './db.js';
 import { S, person, nameOf } from './state.js';
 import { $, $$, h, clear, toast, oops, modal, closeModal, confirmBox, promptBox, popMenu, longPress,
-         initials, shortWhen, clock, dur, bytes, iconEl, debounce, lastSeenText, avatarData, copyText } from './util.js';
+         initials, shortWhen, clock, dur, bytes, iconEl, debounce, lastSeenText, avatarData, copyText,
+         setActiveNav } from './util.js';
 import { applyWallpaper, applyChatStyle, saveSettings, saveChatStyle, startStyleDraft, setStyleDraft,
          cancelStyleDraft, styleDraft, paintWall, WALLPAPERS, ACCENTS, toCustom } from './theme.js';
 import { thumbUrl, compressImage } from './media.js';
@@ -9,7 +10,18 @@ import { jumpTo } from './thread.js';
 
 export function openSide(node) {
   const side = $('#side'), app = $('#app');
-  if (!node) { side.hidden = true; app.classList.remove('has-side'); return; }
+  if (!node) {
+    side.hidden = true; app.classList.remove('has-side');
+    // Settings (and anything else opened from the nav rail) moves the rail's
+    // sliding indicator to its own tab via setActiveNav() in goto(). Closing
+    // the side panel only ever hides an overlay — it never changes which
+    // underlying view (chats/people/calls/saved) is actually behind it, so
+    // the indicator has to be pulled back to S.view here. Without this, tab
+    // order chats → settings → close left "Settings" glowing in the rail
+    // while the chat list was the thing on screen.
+    setActiveNav(S.view);
+    return;
+  }
   clear(side).append(node);
   side.hidden = false; app.classList.add('has-side');
   side.scrollTop = 0;

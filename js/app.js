@@ -1,7 +1,7 @@
 import { initDb, sb, rpc } from './db.js';
 import { saveEnvLocally, forgetEnvLocally, normalizeUrl, normalizeKey, envError } from './env.js';
 import { S } from './state.js';
-import { $, $$, h, clear, toast, oops, paintIcons, initials, modal, closeModal, promptBox, popMenu, closePop, setActiveNav } from './util.js';
+import { $, $$, h, clear, toast, oops, paintIcons, initials, modal, closeModal, promptBox, popMenu, closePop, setActiveNav, clearToasts } from './util.js';
 import { mountAuthUI, loadMe, twoStepGate, initIdentity, startPresence, signOut } from './auth.js';
 import { applySettings, saveSettings } from './theme.js';
 import { loadChats, loadFolders, renderChatList, openChat, closeChat, subscribeGlobal,
@@ -136,6 +136,7 @@ function cancelSearch() {
    for one destination. Your profile now lives at the top of Settings, which is
    where people already look for it. */
 async function goto(nav) {
+  clearToasts();
   setActiveNav(nav);
   if (nav === 'settings') return openSettings();
   S.view = nav;

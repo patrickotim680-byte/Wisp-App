@@ -192,6 +192,16 @@ export function toast(msg, bad = false) {
   $('#toasts').append(t);
   setTimeout(() => { t.style.opacity = '0'; setTimeout(() => t.remove(), 300); }, bad ? 4200 : 2400);
 }
+// #toasts is one global container shared by every screen. A "bad" toast
+// (e.g. the malformed-link message from friendlyMessage() below) sits for
+// 4.2s — long enough that switching chats or nav tabs right after triggering
+// one carries it onto a screen that has nothing to do with it, making a
+// real error look like random noise. Call this from navigation entry points
+// (goto(), openChat(), closeChat()) so a toast never outlives the screen
+// that caused it.
+export function clearToasts() {
+  $$('#toasts .toast').forEach(t => { t.style.opacity = '0'; setTimeout(() => t.remove(), 300); });
+}
 // A handful of Postgres/PostgREST errors are common enough, and ugly enough
 // raw, that they're worth translating. oops() is the shared catch-all handler
 // (calls, reactions, group edits, message sends all funnel through it), so

@@ -32,9 +32,15 @@ function segment(options, value, onpick) {
     },
   }, label)));
   const btns = [...wrap.querySelectorAll('button')];
-  const activeIdx = Math.max(0, options.findIndex(([v]) => v === value));
-  wrap.style.setProperty('--seg-i', String(activeIdx));
-  btns.forEach((c, i) => c.classList.toggle('is-on', i === activeIdx));
+  // findIndex returns -1 when the current value is a custom-uploaded sound
+  // path rather than one of the preset keys. The old code clamped that to 0,
+  // which lit up "Chime"/"Classic ring" as if it were the active choice even
+  // though a custom tone was actually in effect — indistinguishable from the
+  // real thing at a glance. -1 now means "leave every pill unlit", which is
+  // what a genuinely non-preset value should look like.
+  const idx = options.findIndex(([v]) => v === value);
+  wrap.style.setProperty('--seg-i', String(Math.max(0, idx)));
+  btns.forEach((c, i) => c.classList.toggle('is-on', i === idx));
   return wrap;
 }
 function slider(min, max, step, value, oninput, fmt = v => v) {
@@ -206,21 +212,108 @@ function accessibilitySection() {
     row('Animation speed', slider(0.5, 2, 0.1, s.animation_speed, v => saveSettings({ animation_speed: v }), v => v + '×')));
 }
 
+const SOUND_MAX_BYTES = 5 * 1024 * 1024; // keep in sync with the "sounds" bucket's file_size_limit
+
+// The storage path itself carries the original filename (url-encoded, after
+// a "uuid__" separator) so the picker can show "Custom: my-song.mp3" instead
+// of a bare uuid, without needing a second db column just for display text.
+const soundFileName = path => {
+  const seg = (path.split('/').pop() || '');
+  const i = seg.indexOf('__');
+  try { return decodeURIComponent(i >= 0 ? seg.slice(i + 2) : seg); } catch { return seg; }
+};
+
+/* One picker, used for both message and call sounds. Three states, and the
+   UI only ever shows the one that's true:
+   - idle: no custom tone set → just an Upload button
+   - staged: a file was just chosen but not yet confirmed → its own local
+     <audio> preview plays straight from the file (no network involved yet),
+     with explicit "Use this sound" / "Cancel" so picking the wrong file
+     costs nothing
+   - confirmed: a custom tone is active → its real name, a Preview button
+     that plays the uploaded copy, and Replace/Remove
+
+   Previously "Upload" fired the network request the instant a file was
+   chosen, with no preview and no error handling — a file over the bucket's
+   size cap (or any other upload failure) vanished with zero feedback, which
+   is exactly the "I don't even see my song anywhere" symptom. */
+function soundRow({ title, patchKey, fallback, presets, note }) {
+  const presetKeys = presets.map(([k]) => k);
+  const wrap = h('div', { class: 'stack' });
+  let staged = null; // { file, url } for the not-yet-uploaded local preview
+
+  const test = async () => (await import('./notify.js'))[patchKey === 'notif_sound' ? 'playSound' : 'playCallTone']();
+
+  const pick = file => {
+    if (!file.type.startsWith('audio/')) return toast('That doesn\u2019t look like an audio file.', true);
+    if (file.size > SOUND_MAX_BYTES) return toast(`That file is ${bytes(file.size)} — custom sounds are limited to ${bytes(SOUND_MAX_BYTES)}.`, true);
+    if (staged) URL.revokeObjectURL(staged.url);
+    staged = { file, url: URL.createObjectURL(file) };
+    paint();
+  };
+
+  function paint() {
+    clear(wrap);
+    const cur = S.settings[patchKey] ?? fallback;
+    const isCustom = cur && cur !== 'none' && !presetKeys.includes(cur);
+
+    wrap.append(row(title, h('div', { class: 'row-btns' },
+      segment(presets, cur, v => { saveSettings({ [patchKey]: v }).catch(oops); }),
+      h('button', { class: 'btn small ghost', onclick: test }, 'Test')), note));
+
+    if (staged) {
+      wrap.append(h('div', { class: 'kv' },
+        h('div', {}, h('span', {}, '🎵 ' + staged.file.name), h('div', { class: 'hint' }, bytes(staged.file.size) + ' — not saved yet')),
+        h('div', { class: 'row-btns' },
+          h('audio', { controls: true, src: staged.url, style: { height: '32px', maxWidth: '170px' } }),
+          h('button', {
+            class: 'btn small primary',
+            onclick: async e => {
+              const btn = e.currentTarget;
+              const original = btn.textContent;
+              btn.disabled = true; btn.textContent = 'Uploading…';
+              try {
+                const path = `${S.me.id}/${crypto.randomUUID()}__${encodeURIComponent(staged.file.name.slice(0, 60))}`;
+                await upload('sounds', path, staged.file, staged.file.type || 'audio/mpeg');
+                await saveSettings({ [patchKey]: path });
+                URL.revokeObjectURL(staged.url); staged = null;
+                toast('Custom sound saved'); paint();
+              } catch (err) { btn.disabled = false; btn.textContent = original; oops(err); }
+            },
+          }, 'Use this sound'),
+          h('button', { class: 'btn small ghost', onclick: () => { URL.revokeObjectURL(staged.url); staged = null; paint(); } }, 'Cancel'))));
+    } else if (isCustom) {
+      wrap.append(h('div', { class: 'kv' },
+        h('div', {}, h('span', {}, '🎵 Custom: ' + soundFileName(cur))),
+        h('div', { class: 'row-btns' },
+          h('button', { class: 'btn small ghost', onclick: () => new Audio(publicUrl('sounds', cur)).play().catch(oops) }, 'Preview'),
+          h('button', { class: 'btn small', onclick: () => filePick('audio/*', pick) }, 'Replace'),
+          h('button', { class: 'btn small ghost danger', onclick: () => saveSettings({ [patchKey]: fallback }).then(paint).catch(oops) }, 'Remove'))));
+    } else {
+      wrap.append(row('Custom ' + title.toLowerCase(),
+        h('button', { class: 'btn small', onclick: () => filePick('audio/*', pick) }, 'Upload'),
+        `MP3, WAV, or OGG, up to ${bytes(SOUND_MAX_BYTES)}. Stored per account and played on every device you're signed into.`));
+    }
+  }
+
+  paint();
+  return wrap;
+}
+
 function notificationsSection() {
   const s = S.settings;
   return h('section', {},
     h('h3', {}, 'Notifications'),
     row('Preview', selectBox([['full', 'Sender and message'], ['sender_only', 'Sender only'], ['hidden', 'Just “New message”']], s.notif_preview, v => saveSettings({ notif_preview: v }))),
-    row('Message sound', h('div', { class: 'row-btns' },
-      selectBox([['chime', 'Chime'], ['knock', 'Knock'], ['pop', 'Pop'], ['none', 'Silent']], s.notif_sound, v => saveSettings({ notif_sound: v })),
-      h('button', { class: 'btn small ghost', onclick: async () => (await import('./notify.js')).playSound() }, 'Test'))),
-    row('Custom message sound', h('button', { class: 'btn small', onclick: () => filePick('audio/*', f => uploadPublic('sounds', f, 'notif_sound').then(() => toast('Custom sound saved'))) }, 'Upload'),
-      'Uploaded tones are stored per account and play on this and every other device.'),
-    row('Call sound', h('div', { class: 'row-btns' },
-      selectBox([['ring', 'Classic ring'], ['marimba', 'Marimba'], ['pulse', 'Pulse'], ['none', 'Silent']], s.call_sound ?? 'ring', v => saveSettings({ call_sound: v })),
-      h('button', { class: 'btn small ghost', onclick: async () => (await import('./notify.js')).playCallTone() }, 'Test')),
-      'Plays for incoming calls, and while an outgoing call is ringing.'),
-    row('Custom call sound', h('button', { class: 'btn small', onclick: () => filePick('audio/*', f => uploadPublic('sounds', f, 'call_sound').then(() => toast('Custom call sound saved'))) }, 'Upload')),
+    soundRow({
+      title: 'Message sound', patchKey: 'notif_sound', fallback: 'chime',
+      presets: [['chime', 'Chime'], ['knock', 'Knock'], ['pop', 'Pop'], ['none', 'Silent']],
+    }),
+    soundRow({
+      title: 'Call sound', patchKey: 'call_sound', fallback: 'ring',
+      presets: [['ring', 'Classic ring'], ['marimba', 'Marimba'], ['pulse', 'Pulse'], ['none', 'Silent']],
+      note: 'Plays for incoming calls, and while an outgoing call is ringing.',
+    }),
     row('Permission', h('button', {
       class: 'btn small', onclick: async () => { const ok = await (await import('./notify.js')).askPermission(); toast(ok ? 'Granted' : 'Denied'); },
     }, Notification.permission)));

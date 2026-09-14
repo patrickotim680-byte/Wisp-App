@@ -1,7 +1,8 @@
 import { sb, rpc, sel, upd, del, ins, channel, drop } from './db.js';
 import { S, emit, person } from './state.js';
 import { $, $$, h, clear, toast, oops, modal, closeModal, confirmBox, promptBox, popMenu,
-         longPress, shortWhen, initials, lastSeenText, iconEl, debounce, esc, setActiveNav, avatarData } from './util.js';
+         longPress, shortWhen, initials, lastSeenText, iconEl, debounce, esc, setActiveNav, avatarData,
+         clearToasts } from './util.js';
 import { applyChatStyle, applyWallpaper, applySettings, rememberChatStyle } from './theme.js';
 import { renderThread, appendMessage, patchStatus, patchReaction, loadMessages, applyCachedThread } from './thread.js';
 import { renderAttachRow } from './composer.js';
@@ -161,6 +162,7 @@ function chatMenu(c, at = {}) {
 }
 
 export function closeChat() {
+  clearToasts();
   S.chatToken++; // cancel any openChat() still resolving in the background
   if (S.chat) S.pendingByChat.set(S.chat.chat_id, S.pending);
   S.pending = [];
@@ -175,6 +177,7 @@ export function closeChat() {
 }
 
 export async function openChat(chatId) {
+  clearToasts();
   const c = S.chats.find(x => x.chat_id === chatId);
   if (!c) { await loadChats(); return openChat(chatId); }
 
