@@ -40,8 +40,14 @@ const ui = {
 
 // Small inline fallback so the voice-call avatar/backdrop always has
 // something to show even when the chat has no photo set.
-const avatarFallback = name => 'data:image/svg+xml;utf8,' + encodeURIComponent(
-  `<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96"><rect width="96" height="96" rx="48" fill="#8a8578"/><text x="48" y="58" font-family="sans-serif" font-size="34" fill="#f4f1ea" text-anchor="middle">${initials(name)}</text></svg>`);
+const avatarFallback = name => {
+  const svg = mark => `<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96"><rect width="96" height="96" rx="48" fill="#8a8578"/><text x="48" y="58" font-family="sans-serif" font-size="34" fill="#f4f1ea" text-anchor="middle">${mark}</text></svg>`;
+  try {
+    return 'data:image/svg+xml;utf8,' + encodeURIComponent(svg(initials(name)));
+  } catch {
+    return 'data:image/svg+xml;utf8,' + encodeURIComponent(svg('?'));
+  }
+};
 
 function setPeerVisual(name, url) {
   const src = url || avatarFallback(name);

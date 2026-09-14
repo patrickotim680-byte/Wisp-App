@@ -399,12 +399,29 @@ addEventListener('keydown', e => {
 }, true);
 
 export const debounce = (fn, ms = 250) => { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; };
-export const initials = n => (n || '?').trim().split(/\s+/).slice(0, 2).map(w => w[0]).join('').toUpperCase();
+// w[0] used to grab the first UTF-16 *code unit*, not the first character.
+// For a name/group starting with an emoji or other astral-plane character
+// (2 code units), that sliced off a lone surrogate. A lone surrogate is
+// invalid UTF-16 on its own, and encodeURIComponent() throws URIError
+// ("URI malformed") the moment avatarData() below tries to encode it —
+// which oops() then mislabels as a damaged-link toast, since it pattern-
+// matches on that same error text. [...w][0] iterates by code point, so it
+// grabs the whole emoji instead of half of it.
+export const initials = n => (n || '?').trim().split(/\s+/).slice(0, 2).map(w => [...w][0] || '').join('').toUpperCase();
 export const uuid = () => crypto.randomUUID();
 export const linkify = txt => esc(txt).replace(/(https?:\/\/[^\s<]+)/g,
   u => `<a href="${u}" target="_blank" rel="noopener noreferrer">${u}</a>`)
   .replace(/(^|\s)@([\w]+)/g, '$1<b>@$2</b>');
 export const firstUrl = txt => (txt || '').match(/https?:\/\/[^\s]+/)?.[0] || null;
 
-export const avatarData = name => 'data:image/svg+xml;utf8,' + encodeURIComponent(
-  `<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128"><rect width="128" height="128" rx="64" fill="#d9d2c7"/><text x="64" y="80" font-family="sans-serif" font-size="48" fill="#4a4438" text-anchor="middle">${initials(name)}</text></svg>`);
+export const avatarData = name => {
+  const svg = mark => `<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128"><rect width="128" height="128" rx="64" fill="#d9d2c7"/><text x="64" y="80" font-family="sans-serif" font-size="48" fill="#4a4438" text-anchor="middle">${mark}</text></svg>`;
+  try {
+    return 'data:image/svg+xml;utf8,' + encodeURIComponent(svg(initials(name)));
+  } catch {
+    // initials() is surrogate-safe now, but this stays as a hard floor: no
+    // future bad input here should ever crash a profile/contact/group panel
+    // again the way an unpaired surrogate used to.
+    return 'data:image/svg+xml;utf8,' + encodeURIComponent(svg('?'));
+  }
+};
