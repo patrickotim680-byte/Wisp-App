@@ -5,3 +5,5 @@ node_modules
 .DS_Store
 supabase/.temp
 *.zip
+*.zip
+*.patch
