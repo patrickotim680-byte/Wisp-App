@@ -58,7 +58,7 @@ function selectBox(options, value, onpick) {
 
 /* ── the from-scratch OKLCH picker ──────────────────────────────────── */
 function colorPicker() {
-  const cur = parseCustom(S.settings.custom_accent) || ACCENTS[S.settings.accent] || ACCENTS.clay;
+  const cur = parseCustom(S.settings.custom_accent) || ACCENTS[S.settings.accent] || ACCENTS.blue;
   let { l, c, h: hue } = cur;
   const field = h('div', { class: 'picker-field' });
   const dot = h('div', { class: 'picker-dot' });
