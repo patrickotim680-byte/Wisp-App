@@ -1,6 +1,6 @@
 import { sb, rpc, sel, upd, del, ins, upload, publicUrl } from './db.js';
 import { S, person } from './state.js';
-import { $, h, clear, toast, oops, modal, closeModal, confirmBox, promptBox, initials, bytes, shortWhen, debounce, iconEl, avatarData } from './util.js';
+import { $, h, clear, toast, oops, modal, closeModal, confirmBox, promptBox, initials, bytes, shortWhen, debounce, iconEl, avatarData, paintRailAvatar } from './util.js';
 import { ACCENTS, FONTS, WALLPAPERS, applySettings, saveSettings, toCustom, parseCustom, applyWallpaper, paintWall } from './theme.js';
 import { signOut, signOutEverywhere } from './auth.js';
 import { compressImage } from './media.js';
@@ -153,6 +153,7 @@ function changePhoto() {
       S.me.photo_url = url;
       const mini = $('#me-avatar');
       if (mini) mini.src = url;
+      paintRailAvatar(S.me);
       toast('Photo updated'); openSettings();
     } catch (e) { oops(e); }
   });
