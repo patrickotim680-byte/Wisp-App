@@ -91,7 +91,25 @@ const CAM_BODY = '<path fill="currentColor" stroke="none" d="M4.1 6.4h8.5a2.3 2.
 const SLASH = '<path stroke="var(--glyph-cut, #3f3f3f)" stroke-width="3.6" d="M3.9 20.6 20.1 3.6"/>'
   + '<path stroke-width="2" d="M3.9 20.6 20.1 3.6"/>';
 
+/* Two filled speech bubbles for the Chats rail tab — a large one leaning
+   top-left with its tail down at 7 o'clock, and a smaller one behind it to
+   the lower right. Both are solid, so this has to live in F: the stroked
+   two-rectangle P.chat above stays in place for anything that still asks P
+   for it, but F is checked first, so the rail picks this up with no change to
+   index.html.
+
+   The separation between the bubbles is a real hole in the small bubble's
+   path, not a white stroke painted over the big one: its inner edge is an arc
+   of radius R1+0.62 struck from the big bubble's own centre, which carves the
+   crescent. That keeps the gap transparent, so it reads correctly on the
+   light rail, the dark rail and the active tab's glass indicator alike —
+   a white line would have shown up as a light smear on all three. */
+const CHAT_BUBBLES =
+  '<path fill="currentColor" stroke="none" d="M4.36 16.32A7.74 7.74 0 1 1 7.03 18.00L3.65 19.45A0.63 0.63 0 0 1 3.33 19.15L4.36 16.32Z"/>'
+  + '<path fill="currentColor" stroke="none" d="M17.84 8.67A5.48 5.48 0 0 1 19.70 18.45L20.51 20.85A0.57 0.57 0 0 1 20.26 21.05L17.71 19.34A5.48 5.48 0 0 1 13.21 18.36A8.36 8.36 0 0 0 17.84 8.67Z"/>';
+
 const F = {
+  chat: CHAT_BUBBLES,
   'mic-fill': MIC_BODY,
   'mic-off-fill': MIC_BODY + SLASH,
   'video-fill': CAM_BODY,
