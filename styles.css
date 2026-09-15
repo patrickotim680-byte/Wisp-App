@@ -9,7 +9,7 @@
 
 :root {
   --hue-n: 70;
-  --acc-l: 0.55; --acc-c: 0.13; --acc-h: 38;
+  --acc-l: 0.55; --acc-c: 0.16; --acc-h: 250;
 
   --accent:        oklch(var(--acc-l) var(--acc-c) var(--acc-h));
   --accent-strong: oklch(calc(var(--acc-l) - 0.12) var(--acc-c) var(--acc-h));
@@ -238,7 +238,7 @@ input[type="range"] { padding: 0; border: none; background: none; accent-color: 
   position: relative; z-index: 1; flex: 1 1 0; min-width: 0;
   display: grid; justify-items: center; align-content: center; gap: 1px;
   padding: 6px 2px 5px; border: none; background: none; cursor: pointer;
-  border-radius: 19px; color: var(--ink-3);
+  border-radius: 19px; color: var(--ink);
   transition: color 0.2s var(--ease), transform 0.14s var(--ease);
 }
 .rail-btn:active { transform: scale(0.93) }
@@ -862,9 +862,17 @@ input[type="range"] { padding: 0; border: none; background: none; accent-color: 
 .toasts { position: fixed; bottom: calc(20px + env(safe-area-inset-bottom, 0px)); left: 50%; transform: translateX(-50%); display: grid; gap: 8px; z-index: 80; pointer-events: none }
 .toast { background: var(--ink); color: var(--bg); padding: 9px 16px; border-radius: 999px; font-size: 0.88em; box-shadow: var(--lift); animation: rise 0.25s var(--ease); transition: opacity 0.3s var(--ease) }
 .toast.bad { background: var(--danger); color: oklch(0.99 0 0) }
-dialog { border: none; border-radius: 22px; padding: 0; background: var(--surface); color: var(--ink); max-width: min(520px, 94vw); width: 100%; box-shadow: var(--lift) }
+dialog { border: none; border-radius: 22px; padding: 0; background: var(--surface); color: var(--ink); max-width: min(400px, 88vw); width: 100%; box-shadow: var(--lift); margin: auto }
 dialog::backdrop { background: oklch(0.2 0.01 70 / 0.44); backdrop-filter: blur(3px) }
-#modal-body { padding: 24px; display: grid; gap: 14px }
+#modal-body { padding: 22px; display: grid; gap: 14px; position: relative }
+.modal-close {
+  position: absolute; top: 10px; right: 10px; width: 30px; height: 30px;
+  border: none; border-radius: 50%; background: var(--sunken); color: var(--ink-2);
+  display: grid; place-items: center; cursor: pointer;
+  transition: background 0.15s var(--ease), transform 0.14s var(--ease);
+}
+.modal-close:active { transform: scale(0.9) }
+.modal-close .ico, .modal-close svg { width: 15px; height: 15px }
 .modal-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 4px; flex-wrap: wrap }
 
 /* ── call details sheet ────────────────────────────────────────── */

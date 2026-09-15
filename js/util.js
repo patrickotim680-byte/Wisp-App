@@ -285,12 +285,19 @@ export async function shareLink(url, title = 'Wisp') {
 
 export function modal(...nodes) {
   const dlg = $('#modal'), body = clear($('#modal-body'));
-  body.append(...nodes);
+  const closeBtn = h('button', { class: 'modal-close', type: 'button', 'aria-label': 'Close', onclick: closeModal },
+    h('span', { class: 'ico' }, 'x'));
+  body.append(closeBtn, ...nodes);
   dlg.showModal();
   paintIcons(body);
   return dlg;
 }
 export const closeModal = () => $('#modal').close();
+// A tap on the backdrop (the ::backdrop layer, which is the dialog element
+// itself, outside #modal-body) closes the dialog — the same "tap anywhere
+// outside to dismiss" behaviour the context-menu scrim already had. Bound
+// once at module load rather than per-open, since #modal never remounts.
+$('#modal')?.addEventListener('click', e => { if (e.target === $('#modal')) closeModal(); });
 export function confirmBox(title, note, okLabel = 'Confirm') {
   return new Promise(res => {
     modal(
