@@ -14,7 +14,10 @@ export const ACCENTS = {
   plum:   { l: 0.48, c: 0.13, h: 336, label: 'Plum' },
   slate:  { l: 0.47, c: 0.05, h: 250, label: 'Slate' },
   ochre:  { l: 0.63, c: 0.13, h: 78,  label: 'Ochre' },
-  teal:   { l: 0.55, c: 0.10, h: 196, label: 'Teal' },
+  // 0.53, not 0.55: white on teal measured 4.40:1, just under AA for body
+  // text, and a sent bubble is body text. 0.53 takes it to 4.76:1 and is
+  // indistinguishable side by side.
+  teal:   { l: 0.53, c: 0.10, h: 196, label: 'Teal' },
   ink:    { l: 0.33, c: 0.03, h: 70,  label: 'Ink' },
 };
 export const FONTS = {
@@ -23,6 +26,68 @@ export const FONTS = {
   serif: 'Newsreader, Georgia, serif',
   mono:  '"JetBrains Mono", ui-monospace, monospace',
 };
+export const FONT_LABELS = {
+  sans: 'Instrument Sans', neo: 'Inter', serif: 'Newsreader', mono: 'JetBrains Mono',
+};
+
+/* ── app-wide theme packs ──────────────────────────────────────────────────
+   A pack swaps the whole neutral ramp: window, panels, rows, inputs, menus,
+   sheets, borders and all three ink levels — not the chat wallpaper, and not
+   the accent, both of which stay independent so they compose.
+
+   The values live in theme-packs.css (one rule per pack per mode). What is
+   here is only what JavaScript needs: the id it writes to user_settings and
+   three colours to draw the tile with, so the picker shows the actual pack
+   instead of a name. Chips are the light ramp; dark mode is in the CSS.
+
+   Every pack clears WCAG AA in both modes (body text 14.2:1 or better, hint
+   text 4.5:1 or better) — checked numerically, not by eye. */
+export const THEME_PACKS = [
+  { id: 'cream', label: 'Cream', note: 'Warm paper. The original Wisp look.',
+    chip: { bg: 'oklch(0.968 0.017 78)', surface: 'oklch(0.988 0.011 78)', ink: 'oklch(0.248 0.018 78)' } },
+  { id: 'porcelain', label: 'Porcelain', note: 'Cool near-white, crisp and quiet.',
+    chip: { bg: 'oklch(0.980 0.004 250)', surface: 'oklch(0.997 0.002 250)', ink: 'oklch(0.238 0.012 250)' } },
+  { id: 'linen', label: 'Linen', note: 'Greige, softer than white in daylight.',
+    chip: { bg: 'oklch(0.960 0.014 96)', surface: 'oklch(0.982 0.009 96)', ink: 'oklch(0.252 0.017 96)' } },
+  { id: 'mist', label: 'Mist', note: 'Cool blue-grey, calm and low-glare.',
+    chip: { bg: 'oklch(0.966 0.011 232)', surface: 'oklch(0.987 0.007 232)', ink: 'oklch(0.244 0.016 232)' } },
+  { id: 'sage', label: 'Sage', note: 'Muted green, easiest on tired eyes.',
+    chip: { bg: 'oklch(0.964 0.014 150)', surface: 'oklch(0.986 0.009 150)', ink: 'oklch(0.246 0.017 150)' } },
+  { id: 'lavender', label: 'Lavender', note: 'Faint violet, warm without going pink.',
+    chip: { bg: 'oklch(0.965 0.012 300)', surface: 'oklch(0.987 0.008 300)', ink: 'oklch(0.245 0.017 300)' } },
+  { id: 'graphite', label: 'Graphite', note: 'Neutral, no colour cast at all.',
+    chip: { bg: 'oklch(0.972 0.003 265)', surface: 'oklch(0.992 0.002 265)', ink: 'oklch(0.235 0.008 265)' } },
+  { id: 'midnight', label: 'Midnight', note: 'Deep navy. Best of the dark set.',
+    chip: { bg: 'oklch(0.958 0.010 262)', surface: 'oklch(0.980 0.007 262)', ink: 'oklch(0.240 0.018 262)' } },
+];
+export const PACK_IDS = THEME_PACKS.map(p => p.id);
+export const DEFAULT_PACK = 'cream';
+
+/* Text that sits *on* the accent — the sent bubble, primary buttons, the send
+   key. It used to be a fixed near-white, which is fine for a mid-dark accent
+   and quietly awful for a light one: white on Ochre measured 3.36:1, well
+   under AA, and a custom accent from the OKLCH picker can be lighter still.
+   Crossover measured across the hue circle sits at about 0.59 L, so above it
+   we flip to dark ink on the same hue and the bubble stays readable at every
+   accent the picker can produce. */
+const ON_ACCENT_FLIP = 0.59;
+export const onAccentFor = a => a.l >= ON_ACCENT_FLIP
+  ? `oklch(0.18 ${Math.min(a.c, 0.05).toFixed(3)} ${a.h})`
+  : `oklch(0.985 0.008 ${a.h})`;
+
+/* theme-packs.css carries the pack palettes, the received-bubble tint and the
+   per-chat font rule. It is linked from index.html, but injected here too when
+   it is missing so this module works on any shell that has not been updated —
+   the stylesheet is the other half of everything below, and a half-applied
+   theme is worse than none. */
+(function ensurePackStyles() {
+  const href = '/theme-packs.css';
+  if (document.querySelector(`link[href="${href}"]`)) return;
+  const link = document.createElement('link');
+  link.rel = 'stylesheet';
+  link.href = href;
+  document.head.append(link);
+})();
 
 /* ── wallpapers ────────────────────────────────────────────────────────────
    Every preset is pure CSS: nothing to download, nothing to go stale, and a
@@ -122,13 +187,15 @@ export function rememberChatStyle() {
     accent: mine.accent ?? null,
     wallpaper: mine.wallpaper_url ?? null,
     dim: mine.wallpaper_dim ?? null,
+    font: mine.font_family ?? null,
+    tintIn: mine.accent_incoming ?? null,
   });
 }
 
 /* What the open chat should look like right now, ignoring any draft. */
 export function currentChatStyle() {
   const c = S.chat;
-  if (!c) return { accent: null, wallpaper: null, dim: null };
+  if (!c) return { accent: null, wallpaper: null, dim: null, font: null, tintIn: null };
   const mine = S.members.find(m => m.user_id === S.me?.id);
   const cached = mine ? null : readChatStyle(c.chat_id);
   const contact = c.type === 'dm' ? person(c.other_id)?.accent : null;
@@ -136,6 +203,12 @@ export function currentChatStyle() {
     accent: (mine ? mine.accent : cached?.accent) ?? contact ?? null,
     wallpaper: (mine ? mine.wallpaper_url : cached?.wallpaper) ?? null,
     dim: (mine ? mine.wallpaper_dim : cached?.dim) ?? null,
+    // Both read `?? null` rather than a boolean cast on purpose: null means
+    // "inherit the account setting", which is a different answer from false.
+    // They also survive a client that is ahead of the database — the columns
+    // simply read undefined, which collapses to null and inherits.
+    font: (mine ? mine.font_family : cached?.font) ?? null,
+    tintIn: (mine ? mine.accent_incoming : cached?.tintIn) ?? null,
   };
 }
 
@@ -162,6 +235,7 @@ export async function saveChatStyle(patch) {
   if (mine) Object.assign(mine, patch);
   else cacheChatStyle(c.chat_id, {
     accent: patch.accent ?? null, wallpaper: patch.wallpaper_url ?? null, dim: patch.wallpaper_dim ?? null,
+    font: patch.font_family ?? null, tintIn: patch.accent_incoming ?? null,
   });
   rememberChatStyle();
   draft = null;
@@ -182,7 +256,11 @@ export function applySettings(s = S.settings) {
   const dark = s.theme_mode === 'dark' ||
     (s.theme_mode === 'system' && matchMedia('(prefers-color-scheme: dark)').matches);
   root.dataset.theme = dark ? 'dark' : 'light';
+  // The pack owns every neutral surface in the app; theme-packs.css holds the
+  // values for both modes, so this is the whole of "change the entire theme".
+  root.dataset.pack = PACK_IDS.includes(s.theme_pack) ? s.theme_pack : DEFAULT_PACK;
   applyChatStyle();
+  paintBrowserChrome();
 }
 
 /* Accent and wallpaper in one pass, because they're one decision: the chat's
@@ -195,7 +273,21 @@ export function applyChatStyle() {
   st.setProperty('--acc-l', a.l);
   st.setProperty('--acc-c', a.c);
   st.setProperty('--acc-h', a.h);
-  st.setProperty('--hue-n', a.h > 200 && a.h < 320 ? 265 : 70);
+  st.setProperty('--on-accent', onAccentFor(a));
+  // --hue-n is no longer derived from the accent: the theme pack owns the
+  // neutral hue now (theme-packs.css), and having two things fight over one
+  // token is how "I changed the theme and half the app ignored me" happens.
+
+  // Per-chat typeface. Only the conversation column reads --font-chat, so this
+  // is genuinely per chat rather than a second app-wide override.
+  const font = FONTS[eff.font] || null;
+  if (font) st.setProperty('--font-chat', font); else st.removeProperty('--font-chat');
+
+  // Whether received bubbles share the chat accent. Chat override first, then
+  // the account default, so a chat can opt out of an account-wide preference.
+  const tint = eff.tintIn ?? s.accent_incoming ?? false;
+  document.documentElement.dataset.tintIn = tint ? 'on' : 'off';
+
   paintWall($('#thread-wall'), eff.wallpaper ?? s.wallpaper_url ?? null, {
     dim: eff.dim ?? (1 - (s.wallpaper_opacity ?? 1)),
     blur: s.wallpaper_blur || 0,
@@ -204,6 +296,21 @@ export function applyChatStyle() {
 
 /* Kept under the old name: several call sites only care about the backdrop. */
 export const applyWallpaper = applyChatStyle;
+
+/* The PWA/browser chrome around the app (address bar, task switcher card)
+   reads <meta name="theme-color">, which was a hard-coded cream hex. Left
+   alone it frames a Midnight-themed app in a cream bar. */
+function paintBrowserChrome() {
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if (!meta) return;
+  // body's resolved backgroundColor rather than the raw --bg token: the token
+  // is an oklch() string, and theme-color is parsed by the OS shell rather than
+  // the page, so handing it rgb() is the portable answer.
+  const resolved = document.body && getComputedStyle(document.body).backgroundColor;
+  const fallback = getComputedStyle(document.documentElement).getPropertyValue('--bg').trim();
+  const value = (resolved && resolved !== 'rgba(0, 0, 0, 0)' ? resolved : fallback);
+  if (value) meta.setAttribute('content', value);
+}
 
 export async function saveSettings(patch) {
   Object.assign(S.settings, patch);

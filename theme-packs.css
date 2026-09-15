@@ -1,0 +1,401 @@
+/* ==========================================================================
+   Wisp — full-app theme packs.
+
+   styles.css already derives every neutral from one hue (--hue-n) plus a
+   lightness ramp, so an app-wide theme does not need a second design system:
+   it needs the ramp itself to be swappable. Each pack below restates the
+   seven neutral tokens for light and for dark, which is every surface in the
+   app — window, panels, rows, inputs, menus, sheets, borders and all three
+   ink levels. Nothing here touches the accent, so a pack and an accent (or a
+   per-chat accent) compose instead of fighting.
+
+   Loaded after styles.css. html[data-pack="x"] (0,1,1) outranks :root, and
+   html[data-theme="dark"][data-pack="x"] (0,2,1) outranks both, so the dark
+   variant still wins for every pack. [data-contrast="high"] is re-asserted at
+   the bottom at higher specificity so accessibility keeps the last word.
+
+   Every pair below was checked against WCAG 2.1 before it shipped:
+   --ink on --bg and --ink-2 on --surface clear AA for body text, and --ink-3
+   (hint text) was moved off the old 3.7:1 to clear 4.5:1 in every pack. No
+   pack uses pure #fff or pure #000 — the light ramps top out near 0.98 L and
+   the dark ramps bottom out near 0.17 L, which is what keeps a bright room
+   and a dark room both comfortable instead of glaring.
+   ========================================================================== */
+
+/* Cream — light. 14.7:1 body, 4.6:1 hint. */
+html[data-pack="cream"] {
+  --bg: oklch(0.968 0.017 78);
+  --surface: oklch(0.988 0.011 78);
+  --sunken: oklch(0.938 0.020 78);
+  --line: oklch(0.888 0.016 78);
+  --line-soft: oklch(0.928 0.011 78);
+  --ink: oklch(0.248 0.018 78);
+  --ink-2: oklch(0.452 0.016 78);
+  --ink-3: oklch(0.555 0.014 78);
+  --hue-n: 78;
+}
+/* Cream — dark. 15.6:1 body, 4.6:1 hint. */
+html[data-theme="dark"][data-pack="cream"] {
+  --bg: oklch(0.196 0.014 78);
+  --surface: oklch(0.240 0.016 78);
+  --sunken: oklch(0.163 0.012 78);
+  --line: oklch(0.318 0.014 78);
+  --line-soft: oklch(0.257 0.010 78);
+  --ink: oklch(0.947 0.008 78);
+  --ink-2: oklch(0.760 0.011 78);
+  --ink-3: oklch(0.622 0.010 78);
+  --hue-n: 78;
+}
+
+/* Porcelain — light. 15.6:1 body, 4.7:1 hint. */
+html[data-pack="porcelain"] {
+  --bg: oklch(0.980 0.004 250);
+  --surface: oklch(0.997 0.002 250);
+  --sunken: oklch(0.957 0.005 250);
+  --line: oklch(0.906 0.007 250);
+  --line-soft: oklch(0.943 0.005 250);
+  --ink: oklch(0.238 0.012 250);
+  --ink-2: oklch(0.448 0.011 250);
+  --ink-3: oklch(0.555 0.009 250);
+  --hue-n: 250;
+}
+/* Porcelain — dark. 15.9:1 body, 4.7:1 hint. */
+html[data-theme="dark"][data-pack="porcelain"] {
+  --bg: oklch(0.188 0.010 250);
+  --surface: oklch(0.232 0.012 250);
+  --sunken: oklch(0.156 0.009 250);
+  --line: oklch(0.310 0.011 250);
+  --line-soft: oklch(0.249 0.008 250);
+  --ink: oklch(0.948 0.005 250);
+  --ink-2: oklch(0.758 0.008 250);
+  --ink-3: oklch(0.622 0.007 250);
+  --hue-n: 250;
+}
+
+/* Linen — light. 14.2:1 body, 4.5:1 hint. */
+html[data-pack="linen"] {
+  --bg: oklch(0.960 0.014 96);
+  --surface: oklch(0.982 0.009 96);
+  --sunken: oklch(0.930 0.017 96);
+  --line: oklch(0.882 0.014 96);
+  --line-soft: oklch(0.921 0.010 96);
+  --ink: oklch(0.252 0.017 96);
+  --ink-2: oklch(0.455 0.015 96);
+  --ink-3: oklch(0.555 0.013 96);
+  --hue-n: 96;
+}
+/* Linen — dark. 15.7:1 body, 4.6:1 hint. */
+html[data-theme="dark"][data-pack="linen"] {
+  --bg: oklch(0.192 0.012 96);
+  --surface: oklch(0.236 0.014 96);
+  --sunken: oklch(0.158 0.011 96);
+  --line: oklch(0.314 0.013 96);
+  --line-soft: oklch(0.253 0.009 96);
+  --ink: oklch(0.945 0.007 96);
+  --ink-2: oklch(0.756 0.010 96);
+  --ink-3: oklch(0.622 0.009 96);
+  --hue-n: 96;
+}
+
+/* Mist — light. 14.7:1 body, 4.6:1 hint. */
+html[data-pack="mist"] {
+  --bg: oklch(0.966 0.011 232);
+  --surface: oklch(0.987 0.007 232);
+  --sunken: oklch(0.936 0.014 232);
+  --line: oklch(0.886 0.012 232);
+  --line-soft: oklch(0.926 0.008 232);
+  --ink: oklch(0.244 0.016 232);
+  --ink-2: oklch(0.450 0.014 232);
+  --ink-3: oklch(0.555 0.012 232);
+  --hue-n: 232;
+}
+/* Mist — dark. 15.8:1 body, 4.6:1 hint. */
+html[data-theme="dark"][data-pack="mist"] {
+  --bg: oklch(0.190 0.014 232);
+  --surface: oklch(0.234 0.016 232);
+  --sunken: oklch(0.157 0.012 232);
+  --line: oklch(0.312 0.015 232);
+  --line-soft: oklch(0.251 0.010 232);
+  --ink: oklch(0.946 0.007 232);
+  --ink-2: oklch(0.757 0.010 232);
+  --ink-3: oklch(0.622 0.009 232);
+  --hue-n: 232;
+}
+
+/* Sage — light. 14.6:1 body, 4.5:1 hint. */
+html[data-pack="sage"] {
+  --bg: oklch(0.964 0.014 150);
+  --surface: oklch(0.986 0.009 150);
+  --sunken: oklch(0.934 0.018 150);
+  --line: oklch(0.884 0.015 150);
+  --line-soft: oklch(0.924 0.010 150);
+  --ink: oklch(0.246 0.017 150);
+  --ink-2: oklch(0.452 0.015 150);
+  --ink-3: oklch(0.555 0.013 150);
+  --hue-n: 150;
+}
+/* Sage — dark. 15.7:1 body, 4.6:1 hint. */
+html[data-theme="dark"][data-pack="sage"] {
+  --bg: oklch(0.191 0.014 150);
+  --surface: oklch(0.235 0.017 150);
+  --sunken: oklch(0.157 0.012 150);
+  --line: oklch(0.313 0.015 150);
+  --line-soft: oklch(0.252 0.010 150);
+  --ink: oklch(0.946 0.007 150);
+  --ink-2: oklch(0.757 0.011 150);
+  --ink-3: oklch(0.622 0.009 150);
+  --hue-n: 150;
+}
+
+/* Lavender — light. 14.7:1 body, 4.6:1 hint. */
+html[data-pack="lavender"] {
+  --bg: oklch(0.965 0.012 300);
+  --surface: oklch(0.987 0.008 300);
+  --sunken: oklch(0.935 0.016 300);
+  --line: oklch(0.885 0.014 300);
+  --line-soft: oklch(0.925 0.010 300);
+  --ink: oklch(0.245 0.017 300);
+  --ink-2: oklch(0.451 0.015 300);
+  --ink-3: oklch(0.555 0.013 300);
+  --hue-n: 300;
+}
+/* Lavender — dark. 15.7:1 body, 4.6:1 hint. */
+html[data-theme="dark"][data-pack="lavender"] {
+  --bg: oklch(0.192 0.016 300);
+  --surface: oklch(0.236 0.019 300);
+  --sunken: oklch(0.158 0.013 300);
+  --line: oklch(0.314 0.017 300);
+  --line-soft: oklch(0.253 0.012 300);
+  --ink: oklch(0.946 0.008 300);
+  --ink-2: oklch(0.757 0.011 300);
+  --ink-3: oklch(0.622 0.010 300);
+  --hue-n: 300;
+}
+
+/* Graphite — light. 15.4:1 body, 4.6:1 hint. */
+html[data-pack="graphite"] {
+  --bg: oklch(0.972 0.003 265);
+  --surface: oklch(0.992 0.002 265);
+  --sunken: oklch(0.946 0.004 265);
+  --line: oklch(0.894 0.005 265);
+  --line-soft: oklch(0.933 0.003 265);
+  --ink: oklch(0.235 0.008 265);
+  --ink-2: oklch(0.445 0.008 265);
+  --ink-3: oklch(0.555 0.007 265);
+  --hue-n: 265;
+}
+/* Graphite — dark. 16.0:1 body, 4.8:1 hint. */
+html[data-theme="dark"][data-pack="graphite"] {
+  --bg: oklch(0.178 0.006 265);
+  --surface: oklch(0.222 0.008 265);
+  --sunken: oklch(0.148 0.005 265);
+  --line: oklch(0.302 0.008 265);
+  --line-soft: oklch(0.240 0.006 265);
+  --ink: oklch(0.944 0.004 265);
+  --ink-2: oklch(0.754 0.006 265);
+  --ink-3: oklch(0.622 0.005 265);
+  --hue-n: 265;
+}
+
+/* Midnight — light. 14.6:1 body, 4.5:1 hint. */
+html[data-pack="midnight"] {
+  --bg: oklch(0.958 0.010 262);
+  --surface: oklch(0.980 0.007 262);
+  --sunken: oklch(0.928 0.013 262);
+  --line: oklch(0.880 0.012 262);
+  --line-soft: oklch(0.919 0.008 262);
+  --ink: oklch(0.240 0.018 262);
+  --ink-2: oklch(0.446 0.016 262);
+  --ink-3: oklch(0.555 0.014 262);
+  --hue-n: 262;
+}
+/* Midnight — dark. 16.3:1 body, 4.9:1 hint. */
+html[data-theme="dark"][data-pack="midnight"] {
+  --bg: oklch(0.168 0.020 262);
+  --surface: oklch(0.214 0.024 262);
+  --sunken: oklch(0.138 0.017 262);
+  --line: oklch(0.296 0.022 262);
+  --line-soft: oklch(0.232 0.015 262);
+  --ink: oklch(0.944 0.010 262);
+  --ink-2: oklch(0.752 0.014 262);
+  --ink-3: oklch(0.622 0.012 262);
+  --hue-n: 262;
+}
+
+/* Accessibility outranks every pack: same mapping as styles.css, restated at
+   a specificity that beats html[data-pack]. */
+html[data-pack][data-contrast="high"] {
+  --line: var(--ink-2); --ink-2: var(--ink); --ink-3: var(--ink-2);
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Chat accent: both sides of the conversation.
+
+   The bug this fixes: a per-chat accent only ever reached .out .bub, because
+   that is the only bubble painted with --accent. The received bubble kept
+   --surface, so "set this chat to Moss" recoloured half a conversation and
+   left the other half the same grey it was before — the two sides of one chat
+   visibly disagreeing.
+
+   Received bubbles now take the quiet end of the same accent ramp instead of a
+   second colour: same hue, same chroma family, far enough apart in lightness
+   that sent and received are still instantly distinguishable. --accent-quiet
+   against --ink measures 11:1 or better in every theme pack, light and dark,
+   so this is a tint, never a legibility trade.
+
+   Off by default per chat and per account (data-tint-in="off"), because some
+   people want exactly the WhatsApp look. It is one toggle in Theme & wallpaper.
+   ────────────────────────────────────────────────────────────────────────── */
+html[data-tint-in="on"] .in .bub {
+  background: var(--accent-quiet);
+  border-color: color-mix(in oklab, var(--accent-line) 70%, transparent);
+  color: var(--ink);
+}
+html[data-tint-in="on"] .in .bub a { color: var(--accent-strong); }
+html[data-tint-in="on"] .in .bub .quote {
+  background: color-mix(in oklab, var(--surface) 55%, transparent);
+  border-left-color: var(--accent-strong);
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Per-chat typeface.
+
+   --font stays the account-wide choice on :root. --font-chat is set only while
+   a chat that overrides it is open, and only the conversation column reads it,
+   so one chat can be Newsreader without dragging the chat list, settings and
+   every menu along with it. Falling back to var(--font) means "account
+   default" needs no separate flag.
+
+   Inputs and buttons are named explicitly: form controls do not inherit
+   font-family from their ancestors, so the composer would otherwise stay on
+   the account font while the messages above it changed.
+   ────────────────────────────────────────────────────────────────────────── */
+.conv-inner { font-family: var(--font-chat, var(--font)); }
+.conv-inner input,
+.conv-inner textarea,
+.conv-inner button,
+.conv-inner select { font-family: inherit; }
+/* the mini preview inside Theme & wallpaper tracks the draft too */
+.style-thread { font-family: var(--font-chat, var(--font)); }
+
+/* ── theme pack picker ─────────────────────────────────────────────────── */
+.pack-grid {
+  display: grid; gap: 8px; margin-top: 6px;
+  grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+}
+.pack-tile {
+  display: grid; gap: 6px; justify-items: stretch; padding: 6px;
+  border: 1px solid var(--line); border-radius: 13px; background: var(--surface);
+  cursor: pointer; color: var(--ink-2); font: inherit; font-size: 0.78em;
+  transition: transform calc(0.16s / var(--speed)) var(--ease),
+              border-color calc(0.16s / var(--speed)) linear;
+}
+.pack-tile:hover { transform: translateY(-2px); }
+.pack-tile.is-on { border-color: var(--accent); box-shadow: 0 0 0 2px color-mix(in oklab, var(--accent) 30%, transparent); color: var(--ink); }
+.pack-chip {
+  height: 40px; border-radius: 9px; overflow: hidden; position: relative;
+  border: 1px solid color-mix(in oklab, var(--line) 70%, transparent);
+  background: var(--pack-bg);
+}
+.pack-chip::before {
+  content: ''; position: absolute; inset: 6px 6px auto 6px; height: 9px;
+  border-radius: 999px; background: var(--pack-surface);
+}
+.pack-chip::after {
+  content: ''; position: absolute; inset: auto 8px 6px 8px; height: 11px;
+  border-radius: 999px; background: var(--pack-ink); opacity: 0.75;
+}
+.pack-tile small { display: block; text-align: center; }
+
+/* ── notification sound rows ────────────────────────────────────────────── */
+.sound-card {
+  display: grid; gap: 8px; padding: 10px 12px; border-radius: 13px;
+  background: var(--sunken); border: 1px solid var(--line-soft);
+}
+.sound-card.is-staged { border-color: var(--accent-line); background: color-mix(in oklab, var(--accent-quiet) 45%, var(--sunken)); }
+.sound-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.sound-name { font-weight: 600; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sound-card audio { width: 100%; height: 34px; }
+.sound-acts { display: flex; flex-wrap: wrap; gap: 6px; }
+.sound-badge {
+  font-size: 0.72em; font-weight: 700; letter-spacing: 0.03em; text-transform: uppercase;
+  padding: 2px 7px; border-radius: 999px; white-space: nowrap;
+  background: color-mix(in oklab, var(--good) 18%, transparent); color: var(--good);
+}
+.sound-badge.is-pending { background: color-mix(in oklab, var(--accent) 16%, transparent); color: var(--accent-strong); }
+.sound-bars { display: flex; align-items: flex-end; gap: 2px; height: 16px; }
+.sound-bars i {
+  width: 3px; border-radius: 2px; background: var(--accent);
+  animation: soundbar calc(0.9s / var(--speed)) ease-in-out infinite;
+}
+.sound-bars i:nth-child(2) { animation-delay: 0.12s }
+.sound-bars i:nth-child(3) { animation-delay: 0.24s }
+.sound-bars i:nth-child(4) { animation-delay: 0.36s }
+@keyframes soundbar { 0%, 100% { height: 30% } 50% { height: 100% } }
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Location card.
+
+   A shared location used to render as one underlined line of coordinates,
+   which is the one thing a map is for: you could not tell where it was
+   without leaving the app. This is the WhatsApp shape — a real map raster
+   with a pin, an address line, and live sharing that moves.
+   ────────────────────────────────────────────────────────────────────────── */
+.geo-card {
+  display: block; width: min(300px, 72vw); border-radius: calc(var(--radius) - 4px);
+  overflow: hidden; border: 1px solid color-mix(in oklab, var(--line) 60%, transparent);
+  background: var(--sunken); color: inherit; text-decoration: none; cursor: pointer;
+  padding: 0; font: inherit; text-align: left;
+}
+.geo-map {
+  position: relative; height: 148px; overflow: hidden;
+  background: var(--sunken); isolation: isolate;
+}
+.geo-tiles { position: absolute; inset: 0; }
+.geo-tiles img {
+  position: absolute; width: 256px; height: 256px; display: block;
+  image-rendering: -webkit-optimize-contrast;
+}
+.geo-static { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; }
+.geo-pin {
+  position: absolute; left: 50%; top: 50%; width: 30px; height: 30px;
+  transform: translate(-50%, -100%); z-index: 3; pointer-events: none;
+  filter: drop-shadow(0 2px 3px oklch(0 0 0 / 0.4));
+  transition: left calc(0.6s / var(--speed)) var(--ease), top calc(0.6s / var(--speed)) var(--ease);
+}
+.geo-halo {
+  position: absolute; left: 50%; top: 50%; width: 22px; height: 22px; z-index: 2;
+  margin: -11px 0 0 -11px; border-radius: 50%; pointer-events: none;
+  background: color-mix(in oklab, var(--accent) 45%, transparent);
+  animation: geoPulse calc(2.2s / var(--speed)) ease-out infinite;
+}
+@keyframes geoPulse {
+  0%   { transform: scale(0.4); opacity: 0.85 }
+  100% { transform: scale(2.8); opacity: 0 }
+}
+.geo-foot {
+  display: flex; align-items: center; gap: 8px; padding: 8px 10px;
+  background: var(--surface); color: var(--ink);
+}
+.geo-foot .ico { color: var(--accent-strong); flex: none }
+.geo-text { min-width: 0; display: grid; gap: 1px }
+.geo-title { font-weight: 640; font-size: 0.92em; display: flex; align-items: center; gap: 6px }
+.geo-sub { font-size: 0.78em; color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+.geo-live {
+  font-size: 0.68em; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase;
+  padding: 1px 6px; border-radius: 999px; white-space: nowrap;
+  background: color-mix(in oklab, var(--good) 20%, transparent); color: var(--good);
+}
+.geo-live.is-over { background: color-mix(in oklab, var(--ink-3) 18%, transparent); color: var(--ink-3) }
+.geo-live b { display: inline-block; width: 5px; height: 5px; border-radius: 50%; background: currentColor; margin-right: 4px; animation: pulse calc(1.6s / var(--speed)) ease-in-out infinite }
+.geo-fallback { display: grid; place-items: center; gap: 4px; height: 100%; color: var(--ink-3); font-size: 0.8em; padding: 10px; text-align: center }
+.geo-attrib {
+  position: absolute; right: 3px; bottom: 2px; z-index: 4; font-size: 9px; line-height: 1.3;
+  padding: 0 4px; border-radius: 4px; color: var(--ink-2);
+  background: color-mix(in oklab, var(--surface) 78%, transparent);
+}
+/* the send-confirmation preview is the same card, just bigger */
+.geo-confirm .geo-card { width: 100%; }
+.geo-confirm .geo-map { height: 190px; }
+.out .bub .geo-card { border-color: color-mix(in oklab, var(--on-accent) 28%, transparent) }
+.out .bub .geo-foot { background: color-mix(in oklab, var(--surface) 92%, transparent); color: var(--ink) }

@@ -14,6 +14,10 @@ export default function handler(req, res) {
     url: process.env.SUPABASE_URL || '',
     anonKey: process.env.SUPABASE_ANON_KEY || '',
     vapidPublicKey: process.env.VAPID_PUBLIC_KEY || '',
+    // Browser key for Google Static Maps + Geocoding, used by the location
+    // card. Safe to hand the client (restrict it by HTTP referrer in the Google
+    // console); the app works without it on OpenStreetMap tiles.
+    mapsKey: process.env.GOOGLE_MAPS_KEY || '',
     iceServers,
   });
 }

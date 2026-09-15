@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<!--
+  Wisp — theme test bench.
+
+  A static page, no Supabase, no sign-in: open /theme-preview.html on the
+  deployment (or the branch preview) and every app-wide theme, the received
+  bubble tint, the per-chat typefaces and the location card are all switchable
+  in one screen. It drives the real selectors on <html> exactly the way
+  js/theme.js does, against the real styles.css and theme-packs.css, so what you
+  see here is what the app does.
+
+  It also grades itself. The table at the bottom reads the *computed* colours
+  back out of the browser, converts them to WCAG 2.1 relative luminance and
+  prints the real contrast ratio for every pair that carries text, with a
+  pass/fail against AA. Nothing here is asserted by hand — if a palette ever
+  regresses, this page turns red on its own.
+-->
+<html lang="en" data-theme="light" data-pack="cream" data-tint-in="on" data-density="comfortable" data-contrast="normal" data-motion="full">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Wisp · theme test bench</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Instrument+Sans:wght@400;500;600;700&family=Newsreader:opsz,wght@6..72,400;6..72,600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="/styles.css" />
+<link rel="stylesheet" href="/theme-packs.css" />
+<style>
+  body { padding: 0; overflow: auto; display: block; }
+  .tb { max-width: 940px; margin: 0 auto; padding: 18px 16px 60px; display: grid; gap: 18px; }
+  .tb h1 { font-size: 1.3rem; letter-spacing: -0.02em; }
+  .tb h2 { font-size: 0.82rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--ink-3); }
+  .bar { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+  .card { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 14px; display: grid; gap: 12px; }
+  .fauxthread { display: grid; gap: 8px; padding: 12px; border-radius: 14px; background: var(--bg); border: 1px solid var(--line-soft); }
+  .swatchstrip { display: flex; gap: 6px; flex-wrap: wrap; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.84em; }
+  th, td { text-align: left; padding: 5px 8px; border-bottom: 1px solid var(--line-soft); }
+  th { color: var(--ink-3); font-weight: 600; }
+  .pass { color: var(--good); font-weight: 700; }
+  .fail { color: var(--danger); font-weight: 700; }
+  .tokens { display: grid; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 8px; }
+  .tok { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; font-size: 0.72em; }
+  .tok i { display: block; height: 34px; }
+  .tok span { display: block; padding: 3px 6px; color: var(--ink-2); }
+</style>
+</head>
+<body>
+<div class="tb">
+  <div>
+    <h1>Wisp theme test bench</h1>
+    <p class="hint">Real stylesheets, real selectors, live contrast grading. Nothing on this page talks to the database.</p>
+  </div>
+
+  <div class="card">
+    <h2>App theme</h2>
+    <div class="bar" id="packs"></div>
+    <div class="bar">
+      <button class="btn small" id="mode">Switch to dark</button>
+      <button class="btn small" id="tint">Received tint: on</button>
+      <button class="btn small" id="hc">High contrast: off</button>
+      <label style="display:flex;gap:6px;align-items:center">Chat font
+        <select id="font">
+          <option value="">Account default</option>
+          <option value='"Instrument Sans", system-ui, sans-serif'>Instrument Sans</option>
+          <option value="Inter, system-ui, sans-serif">Inter</option>
+          <option value="Newsreader, Georgia, serif">Newsreader</option>
+          <option value='"JetBrains Mono", ui-monospace, monospace'>JetBrains Mono</option>
+        </select>
+      </label>
+    </div>
+    <div class="bar">
+      <span class="hint">Accent</span>
+      <div class="swatchstrip" id="accents"></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Conversation</h2>
+    <!-- .conv-inner is what reads --font-chat in the real app, so the per-chat
+         typeface is being exercised here and not simulated. -->
+    <div class="conv-inner fauxthread">
+      <div class="msg in"><div class="bub">Both sides of this chat should feel like one chat.</div></div>
+      <div class="msg out"><div class="bub">That was the bug: only mine changed colour.</div></div>
+      <div class="msg in"><div class="bub">Now the received ones take the quiet end of the same accent.<br /><a href="#">And a link still reads.</a></div></div>
+      <div class="msg out"><div class="bub tight">
+        <button class="geo-card" type="button">
+          <div class="geo-map">
+            <div class="geo-fallback">Map raster loads from the network<br />(tiles or Google Static Maps)</div>
+            <span class="geo-halo"></span>
+          </div>
+          <div class="geo-foot">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 3v9M8 12h8l-4 9z"/></svg>
+            <div class="geo-text">
+              <div class="geo-title">Live location <span class="geo-live"><b></b>live</span></div>
+              <div class="geo-sub">updated just now · until 21:40</div>
+            </div>
+          </div>
+        </button>
+      </div></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Controls and text</h2>
+    <div class="bar">
+      <button class="btn primary">Primary</button>
+      <button class="btn">Secondary</button>
+      <button class="btn ghost">Ghost</button>
+      <span class="chip">Chip</span>
+      <span class="chip is-on">Selected</span>
+    </div>
+    <label>Input<input placeholder="Type here" /></label>
+    <div class="kv"><div><span>A setting row</span><div class="hint">Hint text, the smallest thing on screen — this is the one that used to miss AA.</div></div><button class="switch" role="switch" aria-checked="true"></button></div>
+    <p>Body copy at normal weight, for reading a paragraph without effort.</p>
+    <p class="muted">Muted secondary copy.</p>
+    <p class="hint">Hint copy.</p>
+    <div class="sound-card">
+      <div class="sound-head">
+        <span class="sound-bars"><i></i><i></i><i></i><i></i></span>
+        <span class="sound-badge">In use</span>
+        <span class="sound-name">my-ringtone.mp3</span>
+      </div>
+      <div class="hint">Stored on your account · 0:04 · plays on every device you sign into.</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Computed tokens</h2>
+    <div class="tokens" id="tokens"></div>
+  </div>
+
+  <div class="card">
+    <h2>Contrast, measured live (WCAG 2.1)</h2>
+    <p class="hint">Read back from the browser's computed styles, not from the source. AA needs 4.5:1 for body and hint text, 3:1 for large text and UI edges.</p>
+    <table><thead><tr><th>Pair</th><th>Ratio</th><th>Needs</th><th></th></tr></thead><tbody id="grades"></tbody></table>
+    <p class="hint" id="verdict"></p>
+  </div>
+</div>
+
+<script type="module">
+const PACKS = [
+  ['cream', 'Cream'], ['porcelain', 'Porcelain'], ['linen', 'Linen'], ['mist', 'Mist'],
+  ['sage', 'Sage'], ['lavender', 'Lavender'], ['graphite', 'Graphite'], ['midnight', 'Midnight'],
+];
+const ACCENTS = {
+  blue: [0.55, 0.16, 250], clay: [0.55, 0.13, 38], moss: [0.52, 0.10, 148],
+  indigo: [0.50, 0.14, 274], plum: [0.48, 0.13, 336], slate: [0.47, 0.05, 250],
+  ochre: [0.63, 0.13, 78], teal: [0.53, 0.10, 196], ink: [0.33, 0.03, 70],
+};
+const root = document.documentElement;
+
+/* Same rule as js/theme.js: above this lightness the accent needs dark text on
+   it, below it white. Duplicated here on purpose — the bench should fail if the
+   app's rule and this one ever disagree. */
+const onAccentFor = (l, c, h) => l >= 0.59
+  ? `oklch(0.18 ${Math.min(c, 0.05)} ${h})`
+  : `oklch(0.985 0.008 ${h})`;
+
+function setAccent(name) {
+  const [l, c, h] = ACCENTS[name];
+  root.style.setProperty('--acc-l', l);
+  root.style.setProperty('--acc-c', c);
+  root.style.setProperty('--acc-h', h);
+  root.style.setProperty('--on-accent', onAccentFor(l, c, h));
+  grade();
+}
+
+const packBar = document.getElementById('packs');
+PACKS.forEach(([id, label]) => {
+  const b = document.createElement('button');
+  b.className = 'btn small';
+  b.textContent = label;
+  b.onclick = () => { root.dataset.pack = id; mark(); grade(); };
+  b.dataset.pack = id;
+  packBar.append(b);
+});
+const mark = () => [...packBar.children].forEach(b =>
+  b.classList.toggle('primary', b.dataset.pack === root.dataset.pack));
+
+const accentBar = document.getElementById('accents');
+Object.entries(ACCENTS).forEach(([name, [l, c, h]]) => {
+  const b = document.createElement('button');
+  b.className = 'swatch';
+  b.title = name;
+  b.style.background = `oklch(${l} ${c} ${h})`;
+  b.onclick = () => setAccent(name);
+  accentBar.append(b);
+});
+
+document.getElementById('mode').onclick = e => {
+  const dark = root.dataset.theme === 'dark';
+  root.dataset.theme = dark ? 'light' : 'dark';
+  e.target.textContent = dark ? 'Switch to dark' : 'Switch to light';
+  grade();
+};
+document.getElementById('tint').onclick = e => {
+  const on = root.dataset.tintIn === 'on';
+  root.dataset.tintIn = on ? 'off' : 'on';
+  e.target.textContent = 'Received tint: ' + (on ? 'off' : 'on');
+  grade();
+};
+document.getElementById('hc').onclick = e => {
+  const on = root.dataset.contrast === 'high';
+  root.dataset.contrast = on ? 'normal' : 'high';
+  e.target.textContent = 'High contrast: ' + (on ? 'off' : 'on');
+  grade();
+};
+document.getElementById('font').onchange = e => {
+  if (e.target.value) root.style.setProperty('--font-chat', e.target.value);
+  else root.style.removeProperty('--font-chat');
+};
+
+/* ── grading ──────────────────────────────────────────────────────────────
+   The browser resolves oklch() for us: paint a colour onto a throwaway element,
+   read it back, and getComputedStyle returns it in a numeric space we can do
+   luminance on. That means these numbers come from the same engine that renders
+   the app, rather than from a second implementation that could be wrong in the
+   same direction as the first. */
+const probe = document.createElement('span');
+probe.style.display = 'none';
+document.body.append(probe);
+
+function rgbOf(cssColor) {
+  probe.style.color = '';
+  probe.style.color = cssColor;
+  const v = getComputedStyle(probe).color;
+  const m = v.match(/-?[\d.]+/g);
+  if (!m) return [0, 0, 0];
+  // color() / oklch() may come back in a wide-gamut form on some browsers;
+  // rgb() is what every current engine gives for a resolved computed colour.
+  return m.slice(0, 3).map(Number).map(n => (v.startsWith('rgb') ? n / 255 : n));
+}
+const lin = c => (c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4));
+const lum = ([r, g, b]) => 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
+function ratio(a, b) {
+  const la = lum(rgbOf(a)), lb = lum(rgbOf(b));
+  const hi = Math.max(la, lb), lo = Math.min(la, lb);
+  return (hi + 0.05) / (lo + 0.05);
+}
+const tokenValue = name => getComputedStyle(root).getPropertyValue(name).trim();
+
+const PAIRS = [
+  ['Body text on window', '--ink', '--bg', 4.5],
+  ['Body text on panel', '--ink', '--surface', 4.5],
+  ['Secondary text on panel', '--ink-2', '--surface', 4.5],
+  ['Hint text on panel', '--ink-3', '--surface', 4.5],
+  ['Hint text on window', '--ink-3', '--bg', 4.5],
+  ['Sent bubble text', '--on-accent', '--accent', 4.5],
+  ['Received bubble text (tinted)', '--ink', '--accent-quiet', 4.5],
+  ['Border against panel', '--line', '--surface', 1.5],
+  ['Danger text on panel', '--danger', '--surface', 4.5],
+  ['Good text on panel', '--good', '--surface', 4.5],
+];
+
+function grade() {
+  const body = document.getElementById('grades');
+  body.replaceChildren();
+  let worst = Infinity, fails = 0;
+  for (const [label, fg, bg, need] of PAIRS) {
+    const r = ratio(tokenValue(fg), tokenValue(bg));
+    if (need >= 4.5) worst = Math.min(worst, r);
+    const ok = r >= need;
+    if (!ok) fails++;
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${label}</td><td>${r.toFixed(2)}:1</td><td>${need}:1</td>`
+      + `<td class="${ok ? 'pass' : 'fail'}">${ok ? 'PASS' : 'FAIL'}</td>`;
+    body.append(tr);
+  }
+  const v = document.getElementById('verdict');
+  const pack = root.dataset.pack, mode = root.dataset.theme;
+  v.textContent = fails
+    ? `${pack} / ${mode}: ${fails} pair(s) below target.`
+    : `${pack} / ${mode}: every text pair passes AA. Weakest text contrast ${worst.toFixed(2)}:1.`;
+  v.className = fails ? 'fail' : 'pass';
+  paintTokens();
+}
+
+function paintTokens() {
+  const box = document.getElementById('tokens');
+  box.replaceChildren();
+  ['--bg', '--surface', '--sunken', '--line', '--ink', '--ink-2', '--ink-3', '--accent', '--accent-quiet', '--on-accent']
+    .forEach(name => {
+      const d = document.createElement('div');
+      d.className = 'tok';
+      const i = document.createElement('i');
+      i.style.background = tokenValue(name);
+      const s = document.createElement('span');
+      s.textContent = name.replace('--', '');
+      d.append(i, s);
+      box.append(d);
+    });
+}
+
+setAccent('clay');
+mark();
+grade();
+</script>
+</body>
+</html>
