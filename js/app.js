@@ -1,7 +1,7 @@
 import { initDb, sb, rpc } from './db.js';
 import { saveEnvLocally, forgetEnvLocally, normalizeUrl, normalizeKey, envError } from './env.js';
 import { S } from './state.js';
-import { $, $$, h, clear, toast, oops, paintIcons, initials, modal, closeModal, promptBox, popMenu, closePop, setActiveNav, clearToasts } from './util.js';
+import { $, $$, h, clear, toast, oops, paintIcons, initials, modal, closeModal, promptBox, popMenu, closePop, setActiveNav, clearToasts, paintRailAvatar } from './util.js';
 import { mountAuthUI, loadMe, twoStepGate, initIdentity, startPresence, signOut } from './auth.js';
 import { applySettings, saveSettings } from './theme.js';
 import { loadChats, loadFolders, renderChatList, openChat, closeChat, subscribeGlobal,
@@ -120,6 +120,7 @@ async function start() {
   try {
     $('#auth').hidden = true;
     await loadMe();
+    paintRailAvatar(S.me);
     if (!await twoStepGate()) return;
     hideBoot();
     $('#app').hidden = false;
