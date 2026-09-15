@@ -140,6 +140,21 @@ export function swapIcon(host, name, size = 20) {
   cur.replaceWith(box.firstChild);
 }
 
+/* Settings tab shows the signed-in person's own photo once they have one —
+   same idea as the reference nav, where the last destination is a live
+   avatar rather than a generic icon. No photo yet: keep the gear, since a
+   blank/initials circle there reads as "broken image," not "you." Callers:
+   once at boot (app.js, right after loadMe()) and again the moment the
+   photo changes (settings.js changePhoto()) so it never goes stale. */
+export function paintRailAvatar(me) {
+  const slot = $('#rail-avatar');
+  if (!slot) return;
+  const url = me?.photo_url || null;
+  if (!url) { slot.innerHTML = `<span class="ico">gear</span>`; paintIcons(slot); return; }
+  const img = h('img', { alt: '', src: url, onerror: () => { slot.innerHTML = `<span class="ico">gear</span>`; paintIcons(slot); } });
+  clear(slot); slot.append(img);
+}
+
 /* ── shared nav-tab state (keeps the sliding glass indicator in sync
    with whichever code path switches the active tab) ────────────────── */
 export function setActiveNav(name) {
