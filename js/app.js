@@ -65,6 +65,27 @@ function fatal(e, note) {
         }, 'Reset saved connection')))));
 }
 
+/* A '#join/<code>' (or '#chat/<id>') on first load is the whole reason a new
+   person is here — usually via a link a friend shared. If they don't have an
+   account yet, the path is: land here with the hash -> "Create account" ->
+   Supabase emails a confirmation link -> tapping it redirects back to
+   location.origin (auth.js sets emailRedirectTo to exactly that, on purpose —
+   Supabase needs a fixed, allow-listed redirect target). That redirect does
+   not, and cannot, carry the original fragment: it's a new URL built by
+   Supabase, not a continuation of this tab's history. So the invite was lost
+   the instant someone chose "Create account" instead of already having one.
+   Capturing it here, before mountAuthUI()/any auth call runs, and re-reading
+   it as a fallback in routeHash() closes that gap without touching the
+   sign-up flow itself. sessionStorage (not the URL) survives the redirect
+   because it's scoped to the browser tab/origin, not the address bar. */
+const PENDING_KEY = 'wisp.pendingHash';
+(function capturePendingHash() {
+  const h = location.hash.slice(1);
+  if (h.startsWith('join/') || h.startsWith('chat/')) {
+    try { sessionStorage.setItem(PENDING_KEY, h); } catch {}
+  }
+})();
+
 async function main() {
   paintIcons();
   // Fire-and-forget, and deliberately first: this only touches IndexedDB, not
@@ -225,17 +246,39 @@ function wireChrome() {
    that lost a character on the way, which is how sharing a link ended in an
    error toast for whoever had just signed up. A code that survived intact is
    decoded as before; one that didn't is passed through raw so the server gets
-   the chance to accept or reject it on its own terms. */
+   the chance to accept or reject it on its own terms.
+
+   Codes come from encode(gen_random_bytes(9),'base64') in Postgres — standard
+   base64, not base64url — so the alphabet includes '+' and '/', and roughly
+   one code in five contains at least one '/'. inviteCode() used to run
+   split('/').filter(Boolean).pop() on every input, which treats that '/' as a
+   path separator and silently keeps only whatever followed the last one —
+   the join then fails server-side (exact string match in join_via_invite)
+   with no clue why. A bare code is a single opaque token with no '/'-delimited
+   structure of its own, so it's only safe to peel off a path segment when the
+   input actually contains one — i.e. it's a URL or a '#join/…' hash, not a
+   code someone typed or pasted directly. */
 const safeDecode = s => { try { return decodeURIComponent(s); } catch { return s; } };
-const inviteCode = raw => safeDecode(String(raw).trim().split('#').pop().split('/').filter(Boolean).pop() || '');
+const inviteCode = raw => {
+  let s = String(raw ?? '').trim();
+  if (!s) return '';
+  s = s.split('#').pop();               // full link pasted -> keep what's after the hash
+  if (s.startsWith('join/')) s = s.slice(5);   // '#join/<code>' marker -> drop the marker only
+  return safeDecode(s);
+};
 
 async function routeHash() {
-  const hash = location.hash.slice(1);
+  let hash = location.hash.slice(1);
+  if (!hash) {
+    try { hash = sessionStorage.getItem(PENDING_KEY) || ''; } catch {}
+  }
+  try { sessionStorage.removeItem(PENDING_KEY); } catch {}
   if (hash.startsWith('join/')) {
     try {
-      const id = await rpc('join_via_invite', { p_code: safeDecode(hash.slice(5)) });
+      const id = await rpc('join_via_invite', { p_code: inviteCode(hash) });
       history.replaceState(null, '', '/');
       await loadChats(); openChat(id);
+      toast('Joined the group');
     } catch (e) { oops(e); }
   }
   if (hash.startsWith('chat/')) { history.replaceState(null, '', '/'); openChat(hash.slice(5)); }
