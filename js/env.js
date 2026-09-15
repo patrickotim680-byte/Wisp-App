@@ -35,7 +35,19 @@ let lastError = null;
 export const envError = () => lastError;
 export const noteEnvError = msg => { lastError = msg || null; };
 
-const KEYS = { url: 'wisp.url', key: 'wisp.key' };
+const KEYS = { url: 'wisp.url', key: 'wisp.key', maps: 'wisp.mapskey' };
+
+/* Google Maps browser key. Public by design (it is a referrer-restricted
+   browser key, not a secret), optional, and only ever used to raster a static
+   map and reverse-geocode a shared pin. Without it the location card falls back
+   to OpenStreetMap tiles, so nothing here is load-bearing. */
+let mapsKey = '';
+export const getMapsKey = () => mapsKey || (() => {
+  try { return localStorage.getItem(KEYS.maps) || ''; } catch { return ''; }
+})();
+export function saveMapsKeyLocally(v) {
+  try { v ? localStorage.setItem(KEYS.maps, String(v).trim()) : localStorage.removeItem(KEYS.maps); } catch {}
+}
 
 export async function loadEnv() {
   try {
@@ -43,6 +55,7 @@ export async function loadEnv() {
     if (r.ok) {
       const j = await r.json();
       const url = normalizeUrl(j.url), anonKey = normalizeKey(j.anonKey);
+      if (j.mapsKey) mapsKey = String(j.mapsKey).trim();
       if (url && anonKey) return { url, anonKey };
       if (j.url && !url) noteEnvError('SUPABASE_URL on the server is not a usable URL.');
       else if (url && !anonKey) noteEnvError('SUPABASE_ANON_KEY is missing on the server.');
