@@ -229,6 +229,9 @@ function friendlyMessage(e) {
   if (e instanceof URIError || /URI malformed|Provided URL is malformed/i.test(e?.message || '')) {
     return 'That link looks damaged — ask for it again, or paste it in full rather than tapping a preview.';
   }
+  if (/invalid invite/i.test(e?.message || '')) {
+    return "That invite link doesn't work anymore — it may have been reset, or the group may be gone. Ask for a fresh one.";
+  }
   if (e?.name === 'NotAllowedError') return 'Permission was not given, so nothing started. You can allow it and try again.';
   if (e?.name === 'NotFoundError' || e?.name === 'OverconstrainedError') return 'No usable microphone or camera was found on this device.';
   if (e?.name === 'NotReadableError') return 'Another app is holding the camera or microphone. Close it and try again.';
