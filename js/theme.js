@@ -7,6 +7,7 @@ import { upd, publicUrl } from './db.js';
 import { $ } from './util.js';
 
 export const ACCENTS = {
+  blue:   { l: 0.55, c: 0.16, h: 250, label: 'Blue' },
   clay:   { l: 0.55, c: 0.13, h: 38,  label: 'Clay' },
   moss:   { l: 0.52, c: 0.10, h: 148, label: 'Moss' },
   indigo: { l: 0.50, c: 0.14, h: 274, label: 'Indigo' },
@@ -190,7 +191,7 @@ export function applyChatStyle() {
   const s = S.settings || {};
   const eff = draft || currentChatStyle();
   const st = document.documentElement.style;
-  const a = parseCustom(eff.accent) || parseCustom(s.custom_accent) || ACCENTS[s.accent] || ACCENTS.clay;
+  const a = parseCustom(eff.accent) || parseCustom(s.custom_accent) || ACCENTS[s.accent] || ACCENTS.blue;
   st.setProperty('--acc-l', a.l);
   st.setProperty('--acc-c', a.c);
   st.setProperty('--acc-h', a.h);
