@@ -1,5 +1,5 @@
 import { sb, rpc, sel, upd, del, ins, channel, drop } from './db.js';
-import { S, emit, person } from './state.js';
+import { S, emit, on, person } from './state.js';
 import { $, $$, h, clear, toast, oops, modal, closeModal, confirmBox, promptBox, popMenu,
          longPress, shortWhen, initials, lastSeenText, iconEl, debounce, esc, setActiveNav, avatarData,
          clearToasts } from './util.js';
@@ -8,6 +8,9 @@ import { renderThread, appendMessage, patchStatus, patchReaction, loadMessages, 
 import { renderAttachRow } from './composer.js';
 import { notify } from './notify.js';
 import { getMemThread, warmCache } from './cache.js';
+import { previewFor, visibleInList } from './lockcore.js';
+import { gateChat, isUnlocked, sweepLocks } from './chatlock.js';
+import { liveCallFor, joinCall, paintThreadBanner } from './calls.js';
 
 export async function loadPeople(ids) {
   const need = [...new Set(ids.filter(Boolean))].filter(id => !S.people.has(id));
@@ -42,6 +45,10 @@ function renderFolders() {
       }
     };
   });
+  // Locked chats get their own tab, and a chat set to "hide from the list"
+  // lives here and nowhere else. The tab only appears once something is
+  // locked, so it is not a permanent advertisement that you have secrets.
+  if (S.chats.some(c => c.locked)) wrap.append(chip('Locked', 'locked'));
   wrap.append(chip('Archived', 'archived'));
   wrap.append(h('button', {
     class: 'chip add', onclick: async () => {
@@ -58,13 +65,11 @@ export async function loadChats() {
   await loadPeople(S.chats.map(c => c.other_id));
   renderChatList();
   updateBadge();
-  // Pull every chat's last-known thread up from disk into the synchronous
-  // memory cache now, in the background — so by the time a chat actually
-  // gets tapped, openChat() can paint it with no I/O wait at all.
   warmCache(S.chats.map(c => c.chat_id));
 }
 
 function matchesFolder(c) {
+  if (S.folder === 'locked') return !!c.locked;
   if (S.folder === 'archived') return c.archived;
   if (c.archived) return false;
   if (S.folder === 'unread') return c.unread > 0;
@@ -72,35 +77,34 @@ function matchesFolder(c) {
   return true;
 }
 
-const previewText = c => {
-  if (c.locked) return 'Locked chat';
-  if (c.e2ee && !c.last_body) return 'Encrypted message';
-  const kindWord = { image: 'Photo', video: 'Video', voice: 'Voice note', audio: 'Audio',
-    document: 'Document', location: 'Location', contact: 'Contact', poll: 'Poll', call: 'Call' };
-  return c.last_body || kindWord[c.last_kind] || 'No messages yet';
-};
+/* One source of truth for what a row is allowed to say, shared with the
+   notification path and the search path. previewFor() is in lockcore.js and is
+   unit tested; the same redaction also happens in SQL (chat_overview), so a
+   locked chat's text does not reach the browser in the first place. */
+const previewText = c => previewFor(c, { unlocked: isUnlocked(c.chat_id) });
 
 export const chatPhoto = c => c.icon_url || (c.type === 'dm' ? person(c.other_id)?.photo_url : null) || null;
 
 export function renderChatList() {
   if (S.view !== 'chats') return;
   const body = clear($('#list-body'));
-  const rows = S.chats.filter(matchesFolder);
+  const unlockedIds = new Set(S.chats.filter(c => isUnlocked(c.chat_id)).map(c => c.chat_id));
+  const rows = S.chats.filter(c => matchesFolder(c) && visibleInList(c, { folder: S.folder, unlockedIds }));
   if (!rows.length) {
     body.append(h('div', { class: 'empty' }, h('p', {}, 'Nothing here'),
-      h('p', { class: 'hint' }, S.folder ? 'No chats in this tab yet.' : 'Find someone in People to start.')));
+      h('p', { class: 'hint' }, S.folder === 'locked' ? 'No locked chats. Lock one from its details panel.'
+        : S.folder ? 'No chats in this tab yet.' : 'Find someone in People to start.')));
     return;
   }
   rows.forEach(c => {
     const p = person(c.other_id);
     const photo = chatPhoto(c);
+    const live = liveCallFor(c.chat_id);
     const av = photo
       ? h('img', { class: 'av', src: photo, alt: '' })
       : h('div', { class: 'av' }, initials(c.name));
     const row = h('button', {
       class: 'row' + (S.chat?.chat_id === c.chat_id ? ' is-on' : ''),
-      // A long press that opened the menu must not also open the chat when the
-      // finger lifts — longPress() flags the element, this clears the flag.
       onclick: e => {
         if (row.dataset.pressed) { delete row.dataset.pressed; return; }
         openChat(c.chat_id);
@@ -110,11 +114,17 @@ export function renderChatList() {
       av,
       h('div', { class: 'row-main' },
         h('div', { class: 'row-top' },
-          h('span', { class: 'row-name' }, c.pinned ? '📌 ' : '', c.name || 'Chat'),
+          h('span', { class: 'row-name' }, c.pinned ? '\ud83d\udccc ' : '', c.name || 'Chat'),
+          c.locked && h('span', { class: 'row-lock', title: 'Locked' }, iconEl('lock', 13)),
           c.type !== 'dm' && h('small', { class: 'hint' }, `${c.member_count}`)),
         h('div', { class: 'row-prev' }, previewText(c))),
       h('div', { class: 'row-side' },
         h('span', {}, shortWhen(c.last_at)),
+        live && h('button', {
+          class: 'btn small primary row-join',
+          title: 'Join this call',
+          onclick: e => { e.stopPropagation(); joinCall(live.call_id, { kind: live.kind }); },
+        }, live.i_am_in ? 'Open' : 'Join'),
         c.unread > 0 && h('div', { class: 'dot-row' }, h('b', { class: 'pill' }, String(c.unread)))));
     longPress(row, at => chatMenu(c, at));
     body.append(row);
@@ -128,7 +138,10 @@ export function renderChatList() {
    chat's own details panel, where there's room to explain what it does. */
 function chatMenu(c, at = {}) {
   const me = { chat_id: c.chat_id, user_id: S.me.id };
+  const live = liveCallFor(c.chat_id);
   const items = [
+    live && { label: live.i_am_in ? 'Open the call' : 'Join the call', icon: live.kind === 'video' ? 'video' : 'call',
+      onclick: () => joinCall(live.call_id, { kind: live.kind }) },
     c.type === 'dm'
       ? { label: 'View profile', icon: 'person', onclick: async () => (await import('./panels.js')).openProfileCard(c.other_id) }
       : { label: 'Group info', icon: 'info', onclick: async () => { await openChat(c.chat_id); (await import('./panels.js')).openChatInfo(); } },
@@ -147,6 +160,11 @@ function chatMenu(c, at = {}) {
       onclick: async () => { await rpc('mark_read', { p_chat: c.chat_id }); loadChats(); } },
     { label: c.archived ? 'Unarchive' : 'Archive', icon: 'archive', on: c.archived,
       onclick: async () => { await upd('chat_members', { archived: !c.archived }, me); loadChats(); } },
+    { label: c.locked ? 'Lock settings' : 'Lock this chat', icon: 'lock', on: c.locked,
+      onclick: async () => {
+        if (c.locked) { await openChat(c.chat_id); (await import('./panels.js')).openChatInfo(); return; }
+        (await import('./chatlock.js')).turnLockOn(c);
+      } },
     { label: 'Theme & wallpaper', icon: 'palette',
       onclick: async () => { await openChat(c.chat_id); (await import('./panels.js')).openChatStyle(); } },
     { sep: true },
@@ -166,6 +184,7 @@ export function closeChat() {
   S.chatToken++; // cancel any openChat() still resolving in the background
   if (S.chat) S.pendingByChat.set(S.chat.chat_id, S.pending);
   S.pending = [];
+  const wasOpen = S.chat?.chat_id || null;
   S.chat = null; S.msgs = []; S.selection.clear(); S.msgsReady = false;
   drop('chat');
   $('#conv-inner').hidden = true;
@@ -174,6 +193,9 @@ export function closeChat() {
   applySettings();
   renderAttachRow();
   renderChatList();
+  // Leaving the chat is exactly the moment an "immediate" lock has to close
+  // behind you. Anything with a timed policy is handled by the sweep.
+  if (wasOpen) sweepLocks({ away: true });
 }
 
 export async function openChat(chatId) {
@@ -183,43 +205,22 @@ export async function openChat(chatId) {
 
   // Every call gets its own token. If a newer openChat() (or closeChat())
   // starts before this one finishes, S.chatToken moves on and every check
-  // below bails out — so a slow/racing load can never overwrite what the
-  // user is actually looking at with a different chat's data.
+  // below bails out.
   const myToken = ++S.chatToken;
 
-  if (c.locked && !S.unlocked.has(chatId)) {
-    const pin = await promptBox('Locked chat', { label: 'PIN', type: 'password' });
-    if (myToken !== S.chatToken) return;
-    if (!pin) return;
-    if (!await rpc('verify_chat_lock', { p_chat: chatId, p_pin: pin })) return toast('Wrong PIN.', true);
-    if (myToken !== S.chatToken) return;
-    S.unlocked.add(chatId);
-  }
+  // The gate. Everything about it — the pad, the attempt limit, the cooldown,
+  // the relock policy — lives in chatlock.js; all this needs to know is
+  // whether it is allowed to paint the chat. A cancelled or failed unlock
+  // leaves the previous screen exactly as it was.
+  if (!await gateChat(chatId)) return;
+  if (myToken !== S.chatToken) return;
 
-  // Switch and blank the thread *before* any network round trip. Previously
-  // the old messages stayed on screen — under the new chat's name — until
-  // the fetch below resolved; on a slow connection that's the "opens Mercy,
-  // shows the other chat's messages" bug. Now there's never a moment where
-  // a chat you're not in is still visible.
-  // A staged-but-unsent photo belongs to the chat you attached it in — carry
-  // it out to pendingByChat before switching, and bring in whatever (if
-  // anything) is staged for the chat being opened, instead of leaving the
-  // old chat's attach-row preview showing on top of the new chat.
   if (S.chat) S.pendingByChat.set(S.chat.chat_id, S.pending);
   S.pending = S.pendingByChat.get(chatId) || [];
 
   S.chat = c; S.msgs = []; S.members = []; S.selection.clear(); S.replyTo = null;
   S.msgsReady = false;
-  // This chat's own accent and wallpaper, right now, synchronously, before
-  // anything paints a pixel. Per-chat appearance lives on chat_members, which
-  // hasn't loaded yet at this point — so applyChatStyle() falls back to the
-  // small localStorage cache written the last time this chat was open on this
-  // device, then to the contact accent, then to the account's. No flash of the
-  // wrong colour and no flash of the wrong wallpaper.
   applyChatStyle();
-  // Synchronous, zero-latency: if this chat is already warm in memory (see
-  // warmCache()/warmAllCached()), paint its real history right now, in the
-  // same tick as the tap — never a blank frame before it, not even briefly.
   applyCachedThread(getMemThread(chatId));
   $('#conv-empty').hidden = true;
   $('#conv-inner').hidden = false;
@@ -229,13 +230,9 @@ export async function openChat(chatId) {
   renderConvHeader();
   renderThread(true);
   renderAttachRow();
+  paintThreadBanner();
 
   try {
-    // Kick the message load off immediately, in parallel with the lookups
-    // below, instead of behind them. loadMessages() paints cached history
-    // (if any) with no network wait at all, so the chat's content shows up
-    // the instant you tap it — member/star/bookmark context fills in
-    // around it a beat later rather than gating the whole thread on itself.
     const messagesP = loadMessages();
 
     S.members = await sel('chat_members', { select: '*', eq: { chat_id: chatId } });
@@ -254,9 +251,6 @@ export async function openChat(chatId) {
     renderConvHeader();
     await messagesP;
     if (myToken !== S.chatToken) return;
-    // Member/star/bookmark context may have landed after the first paint(s)
-    // above — one cheap re-render (no re-scroll) makes sure author names,
-    // stars, and bookmarks reflect it instead of waiting for the next change.
     renderThread(false);
     applyWallpaper();
     subscribeChat(chatId);
@@ -282,8 +276,6 @@ export function renderConvHeader() {
   const p = person(c.other_id);
   $('#conv-name').textContent = c.name || 'Chat';
   const img = $('#conv-avatar');
-  // Always something to look at, and always tappable: the header portrait is
-  // the way into someone's photo and profile now, so it can't be missing.
   img.src = chatPhoto(c) || avatarData(c.name || 'Chat');
   const typers = activeTypers(c.chat_id);
   let sub;
@@ -295,7 +287,7 @@ export function renderConvHeader() {
   $('#btn-call-audio').hidden = c.type === 'broadcast';
 }
 
-/* ── realtime ────────────────────────────────────────────────────────── */
+/* ── realtime ────────────────────────────────────────────────────── */
 export function subscribeChat(chatId) {
   channel('chat', ch => ch
     .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages', filter: `chat_id=eq.${chatId}` },
@@ -332,6 +324,8 @@ export function subscribeGlobal() {
       if (S.chat?.chat_id === m.chat_id && document.visibilityState === 'visible') return;
       const c = S.chats.find(x => x.chat_id === m.chat_id);
       if (!c || c.muted || S.settings.focus_mode || inQuietHours()) return;
+      // notify() redacts locked chats itself (notify.js -> lockcore.notifyPayload),
+      // so there is one place that decides what a notification may say.
       notify(c, m);
     })
     .on('postgres_changes', { event: '*', schema: 'public', table: 'chat_members', filter: `user_id=eq.${S.me.id}` }, () => loadChats())
@@ -339,6 +333,10 @@ export function subscribeGlobal() {
       const old = S.people.get(p.user_id);
       if (old) { S.people.set(p.user_id, { ...old, is_online: p.is_online, last_seen: p.last_seen }); renderConvHeader(); }
     }));
+
+  // A call starting, ending or gaining a participant changes the chat list
+  // (Join buttons) and the Calls tab badge, so redraw when calls.js says so.
+  on('livecalls', () => { renderChatList(); updateBadge(); });
 }
 
 export function inQuietHours() {
@@ -360,9 +358,12 @@ export function updateBadge() {
   b.hidden = !n; b.textContent = n > 99 ? '99+' : String(n);
   document.title = n ? `(${n}) Wisp` : 'Wisp';
   if (navigator.setAppBadge) n ? navigator.setAppBadge(n) : navigator.clearAppBadge?.();
+  const live = (S.liveCalls || []).length;
+  const lb = $('#badge-live-call');
+  if (lb) { lb.hidden = !live; lb.textContent = String(live); }
 }
 
-/* ── starting chats ───────────────────────────────────────────────────── */
+/* ── starting chats ──────────────────────────────────────────────── */
 export async function startDm(userId) {
   const id = await rpc('get_or_create_dm', { p_other: userId });
   await loadChats();

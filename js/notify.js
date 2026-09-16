@@ -1,9 +1,17 @@
 // Local notifications honour the preview-privacy setting, focus mode and quiet
 // hours. Background/closed-app delivery needs the push Edge Function + FCM
 // (see README): the device token registered here is what that function reads.
+//
+// One change worth calling out: what a notification is allowed to say is no
+// longer decided here. notifyPayload() in lockcore.js decides, because a
+// locked chat has to be redacted no matter which of the three preview modes
+// the account is on — a lock is worthless if the message it hides is sitting
+// on the lock screen. The same function is what the tests assert against, and
+// supabase/functions/push-notify applies the same rule server-side for pushes.
 import { S } from './state.js';
 import { sb, ins, publicUrl } from './db.js';
 import { toast } from './util.js';
+import { notifyPayload } from './lockcore.js';
 
 export async function askPermission() {
   if (!('Notification' in window)) return false;
@@ -13,14 +21,15 @@ export async function askPermission() {
 
 export function notify(chat, m) {
   if (!('Notification' in window) || Notification.permission !== 'granted') return;
-  const mode = S.settings.notif_preview;
-  const who = chat.name || 'New message';
-  const title = mode === 'hidden' ? 'Wisp' : who;
-  const body = mode === 'full'
-    ? (m.body || `[${m.kind}]`).slice(0, 140)
-    : mode === 'sender_only' ? 'New message' : 'New message';
+  const { title, body } = notifyPayload(chat, m, S.settings?.notif_preview || 'full');
   const n = new Notification(title, { body, tag: chat.chat_id, silent: false });
-  n.onclick = () => { window.focus(); location.hash = '#chat/' + chat.chat_id; n.close(); };
+  // A locked chat does not deep-link into itself from the lock screen either;
+  // it opens the app and the PIN gate takes it from there.
+  n.onclick = () => {
+    window.focus();
+    if (!chat.locked) location.hash = '#chat/' + chat.chat_id;
+    n.close();
+  };
   playSound();
 }
 
@@ -35,7 +44,7 @@ export function notifyIncomingCall(who, kind, chatId) {
   n.onclick = () => { window.focus(); n.close(); };
 }
 
-/* ── tone synthesis ───────────────────────────────────────────────────────
+/* ── tone synthesis ─────────────────────────────────────────────────────
    Every built-in tone is a short list of notes played in sequence with a
    quick attack/decay envelope — no audio files to host, works offline, and
    sounds distinct enough at a glance to tell message and call sounds apart.
@@ -70,7 +79,7 @@ const CALL_TONES = {
   pulse: { notes: [440, 440, 440], opts: { noteLen: 0.11, gap: 0.16, peak: 0.15 } },
 };
 
-/* ── custom uploaded tones ────────────────────────────────────────────────
+/* ── custom uploaded tones ──────────────────────────────────────────────
    A storage path instead of a preset key means "play the file this account
    uploaded". The old one line — `new Audio(url).play().catch(() => {})` —
    looked complete and failed in four different ways, all of them silent:
@@ -135,8 +144,6 @@ function playFile(path, { loop = false, cap = 0, onFail } = {}) {
   try { a.currentTime = 0; } catch {}
   const p = a.play();
   if (p?.catch) p.catch(err => {
-    // NotAllowedError is the autoplay gate, not a broken file: the next tone
-    // after the person touches the app will work, so don't cry wolf.
     if (err?.name !== 'NotAllowedError' && !warned) {
       warned = true;
       toast('Your custom notification sound could not be played, so Wisp used the built-in tone.', true);
@@ -172,9 +179,6 @@ function playTone(value, presets, opts = {}) {
   if (!value || value === 'none') return;
   const preset = presets[value];
   if (preset) return synth(preset.notes, { ...preset.opts, peak: (preset.opts?.peak ?? 0.14) * volume() / 0.8 });
-  // Not a known key: an uploaded custom sound's storage path. If it cannot be
-  // played, fall back to the preset this account would otherwise have had, so
-  // a notification is never silently lost.
   const fallback = opts.fallback && presets[opts.fallback];
   playFile(value, {
     loop: !!opts.loop,
@@ -191,9 +195,8 @@ export function playCallTone({ loop = false } = {}) {
 }
 
 /* Used by the settings screen so "Preview" and "Test" go through exactly the
-   code path a real notification does — previewing something other than what
-   will actually play is how the old picker managed to look fine and still be
-   wrong. `value` lets it preview a choice that has not been saved yet. */
+   code path a real notification does. `value` lets it preview a choice that
+   has not been saved yet. */
 export function previewSound(kind, value) {
   armAudio();
   const presets = kind === 'call' ? CALL_TONES : MESSAGE_TONES;
@@ -203,8 +206,7 @@ export function previewSound(kind, value) {
 }
 
 /* Confirms an uploaded object is really readable at its public URL before the
-   settings row starts pointing at it — the difference between "saved" and
-   "saved and actually works", which is the whole complaint. */
+   settings row starts pointing at it. */
 export function verifySound(path, timeoutMs = 8000) {
   return new Promise(resolve => {
     const url = publicUrl('sounds', path);
@@ -220,19 +222,15 @@ export function verifySound(path, timeoutMs = 8000) {
   });
 }
 
-/* ── ring loops ───────────────────────────────────────────────────────────
-   Shared by the incoming-call ringtone and the outgoing-call ringback —
-   both are just "replay the chosen call tone on an interval" with a
-   different cadence, and both need to stop cleanly the instant the call
-   state changes, so that lives here instead of being duplicated in calls.js. */
+/* ── ring loops ────────────────────────────────────────────────────────
+   Shared by the incoming-call ringtone and the outgoing-call ringback — both
+   are "replay the chosen call tone on an interval" with a different cadence,
+   and both need to stop cleanly the instant the call state changes. */
 let ringTimer = null;
 export function startRing(intervalMs = 2500) {
   stopRing();
   armAudio();
   const custom = !CALL_TONES[S.settings?.call_sound ?? 'ring'] && (S.settings?.call_sound ?? '') !== 'none';
-  // A custom ringtone loops itself. Re-firing it on a 2.5s timer, which is what
-  // the presets need, stacked a fresh copy of an uploaded file over the one
-  // still playing every 2.5 seconds until the call was answered.
   playCallTone({ loop: custom });
   if (!custom) ringTimer = setInterval(() => playCallTone(), intervalMs);
 }
