@@ -9,7 +9,8 @@ import { loadChats, loadFolders, renderChatList, openChat, closeChat, subscribeG
 import { warmAllCached } from './cache.js';
 import { mountThread, loadMessages } from './thread.js';
 import { mountComposer } from './composer.js';
-import { mountCalls, setIceServers } from './calls.js';
+import { mountCalls, setIceServers, joinCall } from './calls.js';
+import { mountChatLock } from './chatlock.js';
 import { openChatInfo, openDigest, searchInChat, runSearch, viewPeople, viewCalls,
          viewSaved, openSide, personRow, convMenu, openPhotoViewer, openProfileCard } from './panels.js';
 import { openSettings } from './settings.js';
@@ -37,9 +38,9 @@ const boot = $('#boot');
 /* Boot used to be able to hang forever: the splash is a fixed, full-screen
    layer, so anything that threw (or simply never resolved) between main()
    starting and boot.hidden = true left a live app underneath a curtain
-   nobody could tap through — no error, no way out, not even a scroll. Every
-   exit from boot now goes through hideBoot(), a watchdog covers the "never
-   resolves" case, and fatal() always leaves something usable on screen. */
+   nobody could tap through. Every exit from boot now goes through hideBoot(),
+   a watchdog covers the "never resolves" case, and fatal() always leaves
+   something usable on screen. */
 let bootTimer = setTimeout(() => {
   if (!boot.hidden) fatal(new Error('Still waiting on the network after 15 seconds.'));
 }, 15000);
@@ -65,36 +66,29 @@ function fatal(e, note) {
         }, 'Reset saved connection')))));
 }
 
-/* A '#join/<code>' (or '#chat/<id>') on first load is the whole reason a new
-   person is here — usually via a link a friend shared. If they don't have an
-   account yet, the path is: land here with the hash -> "Create account" ->
-   Supabase emails a confirmation link -> tapping it redirects back to
-   location.origin (auth.js sets emailRedirectTo to exactly that, on purpose —
-   Supabase needs a fixed, allow-listed redirect target). That redirect does
-   not, and cannot, carry the original fragment: it's a new URL built by
-   Supabase, not a continuation of this tab's history. So the invite was lost
-   the instant someone chose "Create account" instead of already having one.
-   Capturing it here, before mountAuthUI()/any auth call runs, and re-reading
-   it as a fallback in routeHash() closes that gap without touching the
-   sign-up flow itself. sessionStorage (not the URL) survives the redirect
-   because it's scoped to the browser tab/origin, not the address bar. */
+/* A '#join/<code>' (or '#chat/<id>', or now '#call/<id>') on first load is the
+   whole reason a new person is here — usually via a link a friend shared. If
+   they don't have an account yet, the path is: land here with the hash ->
+   "Create account" -> Supabase emails a confirmation link -> tapping it
+   redirects back to location.origin (auth.js sets emailRedirectTo to exactly
+   that, on purpose — Supabase needs a fixed, allow-listed redirect target).
+   That redirect does not, and cannot, carry the original fragment: it's a new
+   URL built by Supabase, not a continuation of this tab's history. So the
+   invite was lost the instant someone chose "Create account" instead of
+   already having one. Capturing it here, before mountAuthUI()/any auth call
+   runs, and re-reading it as a fallback in routeHash() closes that gap.
+   sessionStorage (not the URL) survives the redirect because it's scoped to
+   the browser tab/origin, not the address bar. */
 const PENDING_KEY = 'wisp.pendingHash';
 (function capturePendingHash() {
   const h = location.hash.slice(1);
-  if (h.startsWith('join/') || h.startsWith('chat/')) {
+  if (h.startsWith('join/') || h.startsWith('chat/') || h.startsWith('call/')) {
     try { sessionStorage.setItem(PENDING_KEY, h); } catch {}
   }
 })();
 
 async function main() {
   paintIcons();
-  // Fire-and-forget, and deliberately first: this only touches IndexedDB, not
-  // the Supabase client, so there's no reason to wait for initDb()'s /api/config
-  // round trip to start it. It runs in parallel with every network step below
-  // (env, session, profile, folders, chat list) — by the time the chat list can
-  // even render, this has almost always already finished, so the very first
-  // chat tapped after signing back in is warm too, not just chats switched
-  // between mid-session.
   warmAllCached();
   const client = await initDb();
   if (!client) return setupScreen();
@@ -125,7 +119,7 @@ async function start() {
     hideBoot();
     $('#app').hidden = false;
 
-    mountThread(); mountComposer(); mountCalls(); wireChrome();
+    mountThread(); mountComposer(); mountCalls(); mountChatLock(); wireChrome();
     await loadFolders();
     await loadChats();
     subscribeGlobal();
@@ -136,10 +130,6 @@ async function start() {
     routeHash();
     registerServiceWorker();
   } catch (e) {
-    // Anything thrown before $('#app') was revealed (a failed profile load, a
-    // rejected first query) used to leave the splash up with only a toast
-    // behind it. If the app is already on screen a toast is the right call;
-    // if it isn't, the person needs a way out.
     if ($('#app').hidden) fatal(e);
     else { hideBoot(); oops(e); }
   }
@@ -153,10 +143,7 @@ function cancelSearch() {
   q.blur();
 }
 
-/* One tab bar, one job per tab. The avatar button that used to sit at the far
-   end opened the very same Settings panel as the gear beside it — two controls
-   for one destination. Your profile now lives at the top of Settings, which is
-   where people already look for it. */
+/* One tab bar, one job per tab. */
 async function goto(nav) {
   clearToasts();
   setActiveNav(nav);
@@ -173,8 +160,6 @@ async function goto(nav) {
 
 function wireChrome() {
   $$('.rail-btn[data-nav]').forEach(btn => btn.onclick = async () => {
-    // Every one of these can touch the network, and an unhandled rejection in
-    // a tab handler is a tab that silently does nothing when tapped.
     try { await goto(btn.dataset.nav); } catch (e) { oops(e); }
   });
 
@@ -217,14 +202,9 @@ function wireChrome() {
     if (e.key === 'Escape') { e.stopPropagation(); cancelSearch(); }
   });
   $('#btn-search-cancel').onclick = cancelSearch;
-  // Previously this only toggled the CSS class, so the panel looked closed
-  // but S.chat/S.msgs and the realtime subscription stayed pointed at that
-  // chat — closeChat() does the full teardown instead.
   $('#btn-back').onclick = closeChat;
   $('#conv-id').onclick = openChatInfo;
   $('#btn-conv-more').onclick = convMenu;
-  // The portrait in the header is now the way into a photo and a profile,
-  // which is what tapping a face is supposed to do everywhere else.
   $('#btn-conv-photo').onclick = () => {
     const c = S.chat;
     if (!c) return;
@@ -253,12 +233,11 @@ function wireChrome() {
    base64, not base64url — so the alphabet includes '+' and '/', and roughly
    one code in five contains at least one '/'. inviteCode() used to run
    split('/').filter(Boolean).pop() on every input, which treats that '/' as a
-   path separator and silently keeps only whatever followed the last one —
-   the join then fails server-side (exact string match in join_via_invite)
-   with no clue why. A bare code is a single opaque token with no '/'-delimited
-   structure of its own, so it's only safe to peel off a path segment when the
-   input actually contains one — i.e. it's a URL or a '#join/…' hash, not a
-   code someone typed or pasted directly. */
+   path separator and silently keeps only whatever followed the last one. A
+   bare code is a single opaque token with no '/'-delimited structure of its
+   own, so it's only safe to peel off a path segment when the input actually
+   contains one — i.e. it's a URL or a '#join/…' hash, not a code someone
+   typed or pasted directly. */
 const safeDecode = s => { try { return decodeURIComponent(s); } catch { return s; } };
 const inviteCode = raw => {
   let s = String(raw ?? '').trim();
@@ -283,6 +262,14 @@ async function routeHash() {
     } catch (e) { oops(e); }
   }
   if (hash.startsWith('chat/')) { history.replaceState(null, '', '/'); openChat(hash.slice(5)); }
+  // A call link, the way a Zoom/Meet link works: tap it and you are in the
+  // room, provided you are a member of the chat it belongs to (join_call()
+  // checks that in Postgres, not here).
+  if (hash.startsWith('call/')) {
+    const id = safeDecode(hash.slice(5)).trim();
+    history.replaceState(null, '', '/');
+    if (id) joinCall(id);
+  }
 }
 
 function setupScreen() {

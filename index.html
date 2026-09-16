@@ -12,6 +12,8 @@
 <link rel="stylesheet" href="/styles.css" />
 <!-- call-control chrome; after styles.css on purpose, it overrides it -->
 <link rel="stylesheet" href="/call.css" />
+<!-- participant grid, join banner and the chat-lock PIN pad; last, same reason -->
+<link rel="stylesheet" href="/lock-call.css" />
 </head>
 <body>
 <div id="boot" class="boot"><div class="boot-mark">wisp</div></div>
@@ -118,6 +120,11 @@
         </div>
       </header>
 
+      <!-- "Mercy and Ali are on a voice call · Join". Filled by
+           calls.js paintThreadBanner() whenever live_calls() has one for this
+           chat, which is what makes joining late possible at all. -->
+      <div class="join-banner" id="call-banner" hidden></div>
+
       <div class="pin-strip" id="pin-strip" hidden></div>
       <div class="select-bar" id="select-bar" hidden>
         <span id="select-count">0 selected</span>
@@ -168,7 +175,7 @@
         <span class="ico">chat</span><span class="rail-label">Chats</span><b id="badge-unread" class="badge" hidden>0</b>
       </button>
       <button class="rail-btn" role="tab" aria-selected="false" data-nav="calls">
-        <span class="ico">call</span><span class="rail-label">Calls</span>
+        <span class="ico">call</span><span class="rail-label">Calls</span><b id="badge-live-call" class="badge live" hidden>1</b>
       </button>
       <button class="rail-btn" role="tab" aria-selected="false" data-nav="people">
         <span class="ico">person</span><span class="rail-label">People</span>
@@ -183,12 +190,18 @@
   </nav>
 </main>
 
-<!-- ── call overlay ─────────────────────────────────────────── -->
+<!-- ── call overlay ─────────────────────────────────────────────────────────
+     #call-grid holds one tile per remote participant. A 1:1 call has exactly
+     one tile, and that tile adopts the original #call-remote <video> element,
+     so the call everyone already knows looks and behaves exactly as it did —
+     the grid only becomes visible as a grid once a second person joins. -->
 <div id="call" class="call" hidden>
   <div class="call-stage">
     <div class="call-audio-bg" id="call-audio-bg"></div>
+    <div class="call-grid" id="call-grid"></div>
     <video id="call-remote" autoplay playsinline></video>
     <video id="call-local" autoplay playsinline muted></video>
+    <button class="call-count" id="call-count" title="Who is in this call" hidden>2</button>
     <div class="call-meta">
       <img id="call-avatar" class="call-avatar" alt="" />
       <b id="call-who"></b>
@@ -201,7 +214,7 @@
   </div>
   <!-- filled 26px glyphs, mic and camera swap to their slashed twin when off
        (js/calls.js); voice calls hide the camera, video calls hide the
-       speaker, so either way this reads as four buttons -->
+       speaker. An incoming call shows accept + decline instead of end. -->
   <div class="call-bar">
     <svg class="call-glow-svg" aria-hidden="true">
       <rect class="call-glow-base" x="0" y="0" width="100%" height="100%" rx="40" ry="40" pathLength="100"/>
@@ -212,7 +225,8 @@
     <button class="round" id="call-cam" title="Camera"><span class="ico" data-size="26">video-fill</span></button>
     <button class="round" id="call-speaker" title="Speaker"><span class="ico" data-size="26">speaker-fill</span></button>
     <button class="round accept" id="call-accept" title="Accept"><span class="ico" data-size="26">phone-fill</span></button>
-    <button class="round hang" id="call-hang" title="End call"><span class="ico" data-size="26">phone-down-fill</span></button>
+    <button class="round hang" id="call-decline" title="Decline"><span class="ico" data-size="26">phone-down-fill</span></button>
+    <button class="round hang" id="call-hang" title="Leave call"><span class="ico" data-size="26">phone-down-fill</span></button>
   </div>
 </div>
 
