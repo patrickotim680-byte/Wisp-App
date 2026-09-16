@@ -92,13 +92,26 @@ export async function stageFile(file) {
   return item;
 }
 
-/* ── private-media encryption ──────────────────────────────────────────── */
+/* ── private-media encryption ─────────────────────────────────────────── */
 
-// The conversation's shared end-to-end key, not the vault's local key. It has
-// to be the shared one: the person on the other side needs to open the photo,
-// and the vault key never leaves this device (by design — see
-// docs/PRIVATE-VAULT.md on why vault key material is not synchronised).
+/**
+ * The conversation's shared end-to-end key — not the vault's local key. It has
+ * to be the shared one: the person on the other side needs to open the photo,
+ * and vault key material never leaves this device by design (see
+ * docs/PRIVATE-VAULT.md on why it is not synchronised).
+ *
+ * The guard matters. crypto.js's chatKey() mints a brand-new AES key and
+ * distributes it to every member when it cannot find or unwrap yours. That is
+ * exactly right when somebody turns encryption on, and it is destructive on a
+ * read path: with the identity key locked (a refreshed tab, no password in this
+ * session) it would replace the key that existing private media was encrypted
+ * under, and every earlier attachment would become unreadable. Refuse instead,
+ * and say why.
+ */
 async function mediaKey(chatId) {
+  if (!chatId) throw new Error('That attachment has no conversation to key from.');
+  if (S.chatKeys.has(chatId)) return S.chatKeys.get(chatId);
+  if (!S.keys?.priv) throw new Error('Your encryption key is locked in this session, so this file cannot be opened yet.');
   const memberIds = S.members?.length ? S.members.map(m => m.user_id) : [];
   return chatKey(chatId, memberIds);
 }
@@ -145,8 +158,9 @@ export async function uploadStaged(chatId, item) {
   };
 }
 
-// chat id is the first path segment by the storage path convention
-// (media/<chat_id>/<uuid>.<ext>), so a decrypt does not need the open chat.
+// The chat id is the first path segment, by the storage path convention
+// (media/<chat_id>/<uuid>.<ext>), so a decrypt does not depend on which
+// conversation happens to be open.
 const chatIdOf = a => String(a?.path || '').split('/')[0] || null;
 
 async function openSealed(a, { thumb = false } = {}) {
@@ -169,6 +183,12 @@ async function openSealed(a, { thumb = false } = {}) {
   return trackedBlobUrl(new Blob([pt], { type: mime }));
 }
 
+// Callers (thread.js, panels.js) treat these as "a URL, or null" and render
+// nothing for null. A rejection here would be an unhandled promise rejection in
+// the middle of a render — which is exactly what happens when the vault locks
+// while a private photo is still resolving. Fail to null and log it.
+const orNull = p => p.catch(e => { console.warn('private media could not be opened', e); return null; });
+
 /**
  * A URL the UI can point an <img>/<video>/<audio> at.
  *
@@ -179,13 +199,13 @@ async function openSealed(a, { thumb = false } = {}) {
  */
 export async function attUrl(a) {
   if (!a?.path) return null;
-  if (a.enc) return openSealed(a);
+  if (a.enc) return orNull(openSealed(a));
   return signedUrl(a.bucket || 'media', a.path);
 }
 
 export async function thumbUrl(a) {
   if (!a) return null;
-  if (a.thumb && a.thumb_enc) return openSealed(a, { thumb: true });
+  if (a.thumb && a.thumb_enc) return orNull(openSealed(a, { thumb: true }));
   if (a.thumb) return signedUrl(a.bucket || 'media', a.thumb);
   return attUrl(a);
 }
