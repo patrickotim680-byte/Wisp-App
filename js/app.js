@@ -14,6 +14,8 @@ import { openChatInfo, openDigest, searchInChat, runSearch, viewPeople, viewCall
          viewSaved, openSide, personRow, convMenu, openPhotoViewer, openProfileCard } from './panels.js';
 import { openSettings } from './settings.js';
 import { registerDevice, askPermission } from './notify.js';
+import { armVaultLifecycle, loadVaultIds, setVaultVisible, isUnlocked } from './vault.js';
+import { mountVault, openVault, leaveVault, lockNow, vaultSearch } from './vault-ui.js';
 
 /* iOS only defines window.Notification for web apps installed to the home
    screen — in plain mobile Safari it is absent entirely. Code that feature
@@ -81,7 +83,7 @@ function fatal(e, note) {
 const PENDING_KEY = 'wisp.pendingHash';
 (function capturePendingHash() {
   const h = location.hash.slice(1);
-  if (h.startsWith('join/') || h.startsWith('chat/')) {
+  if (h.startsWith('join/') || h.startsWith('chat/') || h === 'vault') {
     try { sessionStorage.setItem(PENDING_KEY, h); } catch {}
   }
 })();
@@ -126,6 +128,14 @@ async function start() {
     $('#app').hidden = false;
 
     mountThread(); mountComposer(); mountCalls(); wireChrome();
+    // Which conversations are private has to be known before the first chat
+    // list render and before the realtime subscription starts, so an incoming
+    // private message can never be routed through the normal notification path.
+    // The vault itself always starts locked: nothing about an unlocked vault
+    // survives a page load.
+    await loadVaultIds();
+    mountVault();
+    armVaultLifecycle();
     await loadFolders();
     await loadChats();
     subscribeGlobal();
@@ -145,10 +155,19 @@ async function start() {
   }
 }
 
+function searchInput(value) {
+  $('#btn-search-cancel').classList.toggle('is-shown', value.length > 0);
+  // Inside the vault the search box searches the vault, through its own server
+  // function. The two never share a code path, so a query typed in one cannot
+  // return results from the other.
+  if (S.view === 'vault') return vaultSearch(value);
+  runSearch(value);
+}
+
 function cancelSearch() {
   const q = $('#q');
   q.value = '';
-  runSearch('');
+  S.view === 'vault' ? vaultSearch('') : runSearch('');
   $('#btn-search-cancel').classList.remove('is-shown');
   q.blur();
 }
@@ -159,10 +178,14 @@ function cancelSearch() {
    where people already look for it. */
 async function goto(nav) {
   clearToasts();
+  // Leaving the vault section counts as private content going off screen, which
+  // is what starts the auto-relock countdown.
+  if (S.view === 'vault') setVaultVisible(false);
   setActiveNav(nav);
   if (nav === 'settings') return openSettings();
   S.view = nav;
   $('#q').value = '';
+  $('#q').placeholder = 'Search messages, people, files';
   $('#btn-search-cancel').classList.remove('is-shown');
   openSide(null);
   if (nav === 'chats') { $('#list-title').textContent = 'Chats'; await loadFolders(); renderChatList(); }
@@ -181,6 +204,8 @@ function wireChrome() {
   $('#btn-new-group').onclick = e => popMenu([
     { label: 'New group', icon: 'group-add', onclick: () => newGroupFlow('group') },
     { label: 'New broadcast list', icon: 'broadcast', onclick: () => newGroupFlow('broadcast') },
+    { sep: true },
+    { label: 'Private Vault', icon: 'lock', onclick: () => openVault() },
     { sep: true },
     { label: 'Join with an invite link', icon: 'globe', onclick: async () => {
       const code = await promptBox('Join with invite', { label: 'Invite code or link' });
@@ -206,10 +231,7 @@ function wireChrome() {
     search.focus();
   };
 
-  $('#q').oninput = e => {
-    runSearch(e.target.value);
-    $('#btn-search-cancel').classList.toggle('is-shown', e.target.value.length > 0);
-  };
+  $('#q').oninput = e => searchInput(e.target.value);
   $('#q').addEventListener('focus', () => {
     if ($('#q').value) $('#btn-search-cancel').classList.add('is-shown');
   });
@@ -237,6 +259,12 @@ function wireChrome() {
     if (e.key === 'Escape' && !$('#modal').open) { if (!$('#side').hidden) openSide(null); }
     if ((e.metaKey || e.ctrlKey) && e.key === 'k') { e.preventDefault(); $('#q').focus(); }
     if ((e.metaKey || e.ctrlKey) && e.key === 'f' && S.chat) { e.preventDefault(); searchInChat(); }
+    // Lock everything. Deliberately a single chord with no confirmation: the
+    // moment you need it is the moment somebody is reaching for your phone.
+    if ((e.metaKey || e.ctrlKey) && e.shiftKey && (e.key === 'l' || e.key === 'L')) {
+      e.preventDefault();
+      lockNow('shortcut');
+    }
   });
   addEventListener('hashchange', routeHash);
 }
@@ -282,6 +310,9 @@ async function routeHash() {
       toast('Joined the group');
     } catch (e) { oops(e); }
   }
+  // Where a private notification points. It lands on the authentication screen,
+  // never on a conversation.
+  if (hash === 'vault') { history.replaceState(null, '', '/'); openVault(); }
   if (hash.startsWith('chat/')) { history.replaceState(null, '', '/'); openChat(hash.slice(5)); }
 }
 

@@ -12,11 +12,13 @@
 <link rel="stylesheet" href="/styles.css" />
 <!-- call-control chrome; after styles.css on purpose, it overrides it -->
 <link rel="stylesheet" href="/call.css" />
+<!-- Private Vault surfaces; also after styles.css, same reason -->
+<link rel="stylesheet" href="/vault.css" />
 </head>
 <body>
 <div id="boot" class="boot"><div class="boot-mark">wisp</div></div>
 
-<!-- ── setup (only when env vars are missing) ───────────────────────── -->
+<!-- ── setup (only when env vars are missing) ───────────────── -->
 <section id="setup" class="pane-center" hidden>
   <div class="sheet">
     <h1 class="display">Connect a Supabase project</h1>
@@ -27,7 +29,7 @@
   </div>
 </section>
 
-<!-- ── auth ────────────────────────────────────────────────── -->
+<!-- ── auth ───────────────────────────────────────── -->
 <section id="auth" class="pane-center" hidden>
   <div class="auth-card">
     <img class="auth-logo" src="/assets/wisp-logo.png" alt="Wisp" />
@@ -73,12 +75,16 @@
   </div>
 </section>
 
-<!-- ── app ─────────────────────────────────────────────────── -->
+<!-- ── app ────────────────────────────────────── -->
 <main id="app" class="app" hidden>
   <section class="list" id="list-pane">
     <header class="list-head">
       <h2 id="list-title">Chats</h2>
       <div class="list-actions">
+        <!-- Only visible while the vault is open. One tap, no confirmation:
+             the moment you need it is the moment somebody is reaching for
+             your phone. Also Ctrl/Cmd+Shift+L. -->
+        <button class="icon-btn" id="btn-vault-lock" title="Lock Private Vault" hidden><span class="ico">lock</span></button>
         <button class="icon-btn" id="btn-new-chat" title="New chat"><span class="ico">plus</span></button>
         <button class="icon-btn" id="btn-new-group" title="New group or broadcast"><span class="ico">group-add</span></button>
       </div>
@@ -183,7 +189,7 @@
   </nav>
 </main>
 
-<!-- ── call overlay ─────────────────────────────────────────── -->
+<!-- ── call overlay ────────────────────────────────── -->
 <div id="call" class="call" hidden>
   <div class="call-stage">
     <div class="call-audio-bg" id="call-audio-bg"></div>
@@ -219,6 +225,18 @@
 <div id="toasts" class="toasts"></div>
 <dialog id="modal"><div id="modal-body"></div></dialog>
 <div id="lock" class="pane-center" hidden></div>
+
+<!-- Private Vault screen guard. Painted synchronously the moment Wisp is
+     backgrounded or the device locks, before the browser takes its
+     app-switcher snapshot. It is the strongest thing the web platform offers
+     and it is not a guarantee that no frame was captured — see
+     docs/PRIVATE-VAULT.md. -->
+<div id="vault-shroud" class="vault-shroud" hidden aria-hidden="true">
+  <div class="vault-shroud-inner">
+    <b>Wisp</b>
+    <span>Private Vault hidden</span>
+  </div>
+</div>
 
 <script type="module" src="/js/app.js"></script>
 </body>

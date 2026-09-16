@@ -18,8 +18,9 @@ export function openSide(node) {
     // underlying view (chats/people/calls/saved) is actually behind it, so
     // the indicator has to be pulled back to S.view here. Without this, tab
     // order chats → settings → close left "Settings" glowing in the rail
-    // while the chat list was the thing on screen.
-    setActiveNav(S.view);
+    // while the chat list was the thing on screen. The vault lives inside the
+    // Chats tab, so it points there.
+    setActiveNav(S.view === 'vault' ? 'chats' : S.view);
     return;
   }
   clear(side).append(node);
@@ -49,7 +50,7 @@ const sw = (val, fn) => {
   return b;
 };
 
-/* ── photo viewer ───────────────────────────────────────────────────────
+/* ── photo viewer ──────────────────────────────────────────────────
    Tapping a portrait anywhere in the app lands here. It used to land nowhere
    at all: avatars were decoration, and the only large copy of anyone's photo
    was the 84px one in the details panel. */
@@ -75,7 +76,7 @@ export function openPhotoViewer(url, name = '') {
   requestAnimationFrame(() => layer.classList.add('is-open'));
 }
 
-/* ── profile card ───────────────────────────────────────────────── */
+/* ── profile card ───────────────────────────────────── */
 export async function openProfileCard(userId) {
   let p = person(userId);
   if (!p) {
@@ -117,7 +118,7 @@ export async function openProfileCard(userId) {
       h('button', { class: 'btn ghost', onclick: closeModal }, 'Close')));
 }
 
-/* ── theme & wallpaper for one chat ─────────────────────────────────────
+/* ── theme & wallpaper for one chat ────────────────────────────────────
    Everything in here is a draft: picking a colour or a wallpaper repaints the
    real thread behind the panel and the small preview above, and writes to
    nothing. Apply is the only thing that touches the database, and Cancel puts
@@ -247,17 +248,22 @@ export function openChatStyle() {
 export function convMenu(e) {
   const c = S.chat;
   if (!c) return;
+  // A private conversation is not summarised or exported. Both would take its
+  // contents out through a surface the vault does not cover — a digest computed
+  // on the server, and a plaintext file in a downloads folder. The server
+  // refuses both for vaulted conversations; this simply doesn't offer them.
+  const priv = !!c.vaulted;
   popMenu([
     { label: c.type === 'dm' ? 'Contact info' : 'Group info', icon: 'info', onclick: openChatInfo },
     { label: 'Search in chat', icon: 'search', onclick: searchInChat },
-    { label: 'Catch me up', icon: 'spark', onclick: () => openDigest() },
+    !priv && { label: 'Catch me up', icon: 'spark', onclick: () => openDigest() },
     { sep: true },
     { label: 'Theme & wallpaper', icon: 'palette', onclick: openChatStyle },
     { label: 'Media & files', icon: 'image', onclick: sharedMedia },
-    { label: 'Export conversation', icon: 'download', onclick: exportChat },
+    !priv && { label: 'Export conversation', icon: 'download', onclick: exportChat },
     { sep: true },
     { label: 'Clear history', icon: 'eraser', danger: true, onclick: clearHistory },
-  ], { anchor: e.currentTarget, title: c.name || 'Chat' });
+  ].filter(Boolean), { anchor: e.currentTarget, title: c.name || 'Chat' });
 }
 
 export async function clearHistory() {
@@ -267,11 +273,14 @@ export async function clearHistory() {
   await rpc('clear_history', { p_chat: c.chat_id });
   const { loadChats } = await import('./chats.js');
   const { loadMessages } = await import('./thread.js');
+  // Drop the local copy too, encrypted or not — clearing history that leaves the
+  // messages sitting in an on-device cache is not clearing history.
+  await (await import('./cache.js')).dropCached(c.chat_id);
   await loadMessages();
   loadChats();
 }
 
-/* ── chat details ─────────────────────────────────────────────── */
+/* ── chat details ────────────────────────────── */
 export async function openChatInfo() {
   const c = S.chat; if (!c) return;
   const meRow = S.members.find(m => m.user_id === S.me.id);
@@ -412,51 +421,77 @@ export async function openChatInfo() {
       .map(([v, l]) => h('option', { value: v, selected: c.disappear_seconds === v }, l))),
       'Enforced by RLS plus a purge job, not just hidden in the UI.'),
     seg('Encryption', sw(c.e2ee, async v => {
+      // A private conversation stays encrypted: that is what keeps the server
+      // from holding a readable copy, and what keeps it out of server-side
+      // search, digests and push payloads. The server refuses this too (see
+      // 20260916_private_vault_guards.sql) — the message is thrown rather than
+      // toasted so the switch reverts with exactly one explanation on screen.
+      if (c.vaulted && !v) throw new Error('A conversation in Private Vault stays encrypted. Move it out of the vault first, then decide about encryption.');
       if (v && !S.keys && !await (await import('./auth.js')).unlockKeysInteractive()) return;
       if (v) await (await import('./crypto.js')).chatKey(c.chat_id, S.members.map(m => m.user_id));
       await rpc('set_chat_e2ee', { p_chat: c.chat_id, p_on: v });
       (await import('./chats.js')).loadChats();
       toast(v ? 'New messages will be encrypted.' : 'Encryption off.');
-    }), 'Applies to text from here on. Old messages keep their old state.'),
+    }), c.vaulted
+      ? 'On, and kept on: a conversation in Private Vault is end-to-end encrypted, so the server holds no readable copy of it.'
+      : 'Applies to text from here on. Old messages keep their old state.'),
     seg('Notifications', h('select', {
       onchange: e => upd('chat_members', { notify_level: e.target.value }, { chat_id: c.chat_id, user_id: S.me.id }),
     }, [['all', 'All messages'], ['mentions', 'Mentions only'], ['none', 'Nothing']]
-      .map(([v, l]) => h('option', { value: v, selected: (meRow?.notify_level) === v }, l)))),
-    S.folders.length ? seg('Tab', h('select', {
+      .map(([v, l]) => h('option', { value: v, selected: (meRow?.notify_level) === v }, l))),
+      c.vaulted ? 'Whatever this is set to, a notification for this conversation never shows a sender or a message.' : null),
+    S.folders.length && !c.vaulted ? seg('Tab', h('select', {
       onchange: async e => { await upd('chat_members', { folder_id: e.target.value || null }, { chat_id: c.chat_id, user_id: S.me.id }); (await import('./chats.js')).loadChats(); },
     }, h('option', { value: '' }, 'None'),
       ...S.folders.map(f => h('option', { value: f.id, selected: f.id === c.folder_id }, f.name))) ) : null,
-    seg('Chat lock', h('button', {
+
+    /* Private Vault replaces the old per-chat PIN. That PIN set a boolean and a
+       bcrypt hash on the member row: it hid this chat behind a prompt and
+       changed nothing else — the messages stayed in the plaintext local cache,
+       in normal search, in the media gallery and in notification previews. */
+    seg('Private Vault', h('button', {
+      class: 'btn small' + (c.vaulted ? '' : ' primary'), onclick: async () => {
+        const { moveToVault, moveOutOfVault } = await import('./vault-ui.js');
+        if (c.vaulted) await moveOutOfVault(c); else await moveToVault(c);
+      },
+    }, c.vaulted ? 'In the vault' : 'Move in'),
+      c.vaulted
+        ? 'Out of your chat list, out of normal search and media browsing, no sender or message in notifications, vault authentication to open.'
+        : 'Moves this conversation and its media behind vault authentication, and out of the normal list, search, media browsing and notification previews.'),
+
+    c.locked && seg('Old chat lock', h('button', {
       class: 'btn small', onclick: async () => {
-        if (c.locked) { await rpc('set_chat_lock', { p_chat: c.chat_id, p_pin: null }); }
-        else {
-          const pin = await promptBox('Chat lock', { label: 'PIN', type: 'password', note: 'Asked once per session before this chat opens.' });
-          if (!pin) return;
-          await rpc('set_chat_lock', { p_chat: c.chat_id, p_pin: pin });
-        }
+        await rpc('set_chat_lock', { p_chat: c.chat_id, p_pin: null });
         (await import('./chats.js')).loadChats();
         openChatInfo();
       },
-    }, c.locked ? 'On' : 'Off'), 'A PIN in front of this one chat, checked in Postgres.')));
+    }, 'Turn off'),
+      'A PIN in front of this one chat, and nothing more — it did not encrypt anything, and it did not change search, media or notifications. Private Vault replaces it.')));
 
   wrap.append(h('section', {},
     h('h3', {}, 'Housekeeping'),
     h('div', { class: 'row-btns' },
-      h('button', { class: 'btn small', onclick: exportChat }, 'Export conversation'),
-      h('button', { class: 'btn small', onclick: openDigest }, 'Catch me up'),
-      h('button', { class: 'btn small danger', onclick: clearHistory }, 'Clear history'))));
+      !c.vaulted && h('button', { class: 'btn small', onclick: exportChat }, 'Export conversation'),
+      !c.vaulted && h('button', { class: 'btn small', onclick: openDigest }, 'Catch me up'),
+      h('button', { class: 'btn small danger', onclick: clearHistory }, 'Clear history')),
+    c.vaulted && h('p', { class: 'hint' }, 'Export and Catch me up are not offered for a private conversation: one writes a plaintext file to your downloads, the other is computed on the server. Both would take the contents outside the boundary the vault sets.')));
 
   openSide(wrap);
 }
 
 export async function sharedMedia() {
-  const rows = await rpc('shared_media', { p_chat: S.chat.chat_id });
+  const c = S.chat;
+  if (!c) return;
+  // p_vault is an explicit opt-in. The server refuses to list a private
+  // conversation's media without it, so a caller that has not thought about
+  // whether it is inside the vault gets an error rather than private photos.
+  const rows = await rpc('shared_media', { p_chat: c.chat_id, p_vault: !!c.vaulted });
   const grid = h('div', { class: 'gallery' });
   const docs = h('div', { class: 'stack' });
   rows.forEach(async m => {
     if (m.kind === 'image' || m.kind === 'video') {
       const u = await thumbUrl(m.attachment);
-      grid.append(h('img', { src: u, loading: 'lazy', onclick: () => jumpTo(m.id) }));
+      if (u) grid.append(h('img', { src: u, loading: 'lazy', onclick: () => jumpTo(m.id) }));
     } else {
       docs.append(h('button', { class: 'result', onclick: () => jumpTo(m.id) },
         h('b', {}, m.attachment?.name || m.kind), h('small', {}, `${bytes(m.attachment?.size || 0)} · ${shortWhen(m.created_at)}`)));
@@ -464,11 +499,13 @@ export async function sharedMedia() {
   });
   openSide(h('div', {},
     sideHead('Shared media', openChatInfo, 'Back'),
+    c.vaulted && h('p', { class: 'hint' }, 'Private media. It is not listed anywhere outside the vault, and these previews stop working the moment the vault locks.'),
     h('section', {}, grid), h('section', {}, docs),
     !rows.length && h('p', { class: 'hint' }, 'Nothing shared yet.')));
 }
 
 export async function exportChat() {
+  if (S.chat?.vaulted) return toast('A private conversation is not exported to a plaintext file.', true);
   try {
     const text = await rpc('export_chat_text', { p_chat: S.chat.chat_id });
     const header = `Wisp export — ${S.chat.name}\n${new Date().toLocaleString()}\n${'-'.repeat(40)}\n\n`;
@@ -488,8 +525,9 @@ export async function exportChat() {
   } catch (e) { oops(e); }
 }
 
-/* ── catch me up ───────────────────────────────────────────────── */
+/* ── catch me up ────────────────────────────────── */
 export async function openDigest(hours = 12) {
+  if (S.chat?.vaulted) return toast('A private conversation is not summarised on the server.', true);
   try {
     const d = await rpc('chat_digest', { p_chat: S.chat.chat_id, p_hours: hours });
     const max = Math.max(1, ...(d.by_hour || []).map(x => x.count));
@@ -512,12 +550,12 @@ export async function openDigest(hours = 12) {
           h('div', { class: 'stack' }, d.links.slice(0, 8).map(u => h('a', { href: u, target: '_blank', rel: 'noopener', class: 'hint' }, u.slice(0, 70))))) : null,
         d.files?.length ? h('div', {}, h('b', {}, 'Files'),
           h('div', { class: 'stack' }, d.files.slice(0, 8).map(f => h('small', { class: 'hint' }, `${f.name || f.kind} · ${shortWhen(f.at)}`)))) : null),
-      h('p', { class: 'hint' }, 'Computed in SQL over the window, no model involved. Encrypted chats cannot be summarised server-side.'),
+      h('p', { class: 'hint' }, 'Computed in SQL over the window, no model involved. Encrypted and private conversations cannot be summarised server-side.'),
       h('div', { class: 'modal-actions' }, h('button', { class: 'btn ghost', onclick: closeModal }, 'Close')));
   } catch (e) { oops(e); }
 }
 
-/* ── list-pane views ──────────────────────────────────────────────── */
+/* ── list-pane views ─────────────────────────────────── */
 export async function viewPeople() {
   const body = clear($('#list-body'));
   $('#list-title').textContent = 'People';
@@ -568,7 +606,9 @@ export async function viewCalls(tab = 'all') {
   [['all', 'All'], ['missed', 'Missed'], ['outgoing', 'Outgoing'], ['incoming', 'Incoming']].forEach(([k, l]) =>
     chips.append(h('button', { class: 'chip' + (tab === k ? ' is-on' : ''), onclick: () => viewCalls(k) }, l)));
   const allRows = await (await import('./calls.js')).callHistory();
-  const rows = allRows.filter(r => {
+  // Calls in a private conversation are not listed in the normal call history:
+  // the row would name the person and timestamp the conversation.
+  const rows = allRows.filter(r => !S.vault.ids.has(r.chat_id)).filter(r => {
     if (tab === 'all') return true;
     if (tab === 'missed') return r.state === 'missed';
     const out = r.caller_id === S.me.id;
@@ -619,11 +659,24 @@ export async function viewSaved(tab = 'starred') {
     : sb.from('bookmarks').select('message_id, note, created_at, messages(*, chats(name, type))').eq('user_id', S.me.id);
   const { data, error } = await q;
   if (error) return oops(error);
-  if (!data?.length) return void body.append(h('div', { class: 'empty' },
-    h('p', {}, tab === 'starred' ? 'Nothing starred' : 'Nothing saved for later'),
-    h('p', { class: 'hint' }, 'Hover a message and use the star or the bookmark.')));
-  data.forEach(r => {
-    const m = r.messages; if (!m) return;
+
+  // Stars and bookmarks are read straight from the tables, so the vault
+  // exclusion has to happen here. A message starred before its conversation was
+  // made private would otherwise show its text, its author and its conversation
+  // name on a screen that needs no authentication.
+  const rowsIn = (data || []).filter(r => r.messages && !S.vault.ids.has(r.messages.chat_id));
+  const hiddenCount = (data || []).length - rowsIn.length;
+
+  if (!rowsIn.length) {
+    body.append(h('div', { class: 'empty' },
+      h('p', {}, tab === 'starred' ? 'Nothing starred' : 'Nothing saved for later'),
+      h('p', { class: 'hint' }, 'Hover a message and use the star or the bookmark.')));
+    if (hiddenCount) body.append(h('p', { class: 'hint', style: { padding: '0 16px' } },
+      `${hiddenCount} saved message${hiddenCount === 1 ? '' : 's'} ${hiddenCount === 1 ? 'belongs' : 'belong'} to a private conversation and only appear inside Private Vault.`));
+    return;
+  }
+  rowsIn.forEach(r => {
+    const m = r.messages;
     body.append(h('button', {
       class: 'result', onclick: async () => {
         const { openChat } = await import('./chats.js');
@@ -634,11 +687,13 @@ export async function viewSaved(tab = 'starred') {
       h('span', {}, (m.body || `[${m.kind}]`).slice(0, 140)),
       h('small', {}, [nameOf(m.sender_id), shortWhen(m.created_at), r.note].filter(Boolean).join(' · '))));
   });
+  if (hiddenCount) body.append(h('p', { class: 'hint', style: { padding: '8px 16px' } },
+    `${hiddenCount} more ${hiddenCount === 1 ? 'is' : 'are'} in a private conversation and only appear inside Private Vault.`));
 }
 
 async function renderScheduled(body) {
   const rows = await sb.from('scheduled_messages').select('*, chats(name)').eq('sender_id', S.me.id).order('send_at');
-  const pend = (rows.data || []).filter(r => r.status === 'pending');
+  const pend = (rows.data || []).filter(r => r.status === 'pending' && !S.vault.ids.has(r.chat_id));
   if (!pend.length) body.append(h('div', { class: 'empty' }, h('p', {}, 'Nothing queued'),
     h('p', { class: 'hint' }, 'Attach menu → Schedule this message.')));
   pend.forEach(r => body.append(h('div', { class: 'result' },
@@ -661,7 +716,7 @@ async function renderScheduled(body) {
       h('button', {
         class: 'btn small danger', onclick: async () => { await upd('scheduled_messages', { status: 'cancelled' }, { id: r.id }); viewSaved('scheduled'); },
       }, 'Cancel')))));
-  const seen = (rows.data || []).filter(r => r.status !== 'pending');
+  const seen = (rows.data || []).filter(r => r.status !== 'pending' && !S.vault.ids.has(r.chat_id));
   if (seen.length) {
     body.append(h('div', { class: 'list-sep' }, 'History'));
     seen.slice(0, 20).forEach(r => body.append(h('div', { class: 'result' },
@@ -672,7 +727,12 @@ async function renderScheduled(body) {
 
 export const viewScheduled = () => viewSaved('scheduled');
 
-/* ── search across everything ───────────────────────────────────────── */
+/* ── search across everything ────────────────────────────────────── */
+/* Private conversations are excluded by search_messages() itself, in SQL — the
+   query never looks at those rows, so there is nothing here to filter and
+   nothing a tampered-with client could un-hide. Searching inside the vault is a
+   separate function, reachable only from the vault's own search box after
+   authentication (see vaultSearch in js/vault-ui.js). */
 export const runSearch = debounce(async q => {
   const { renderChatList } = await import('./chats.js');
   const body = $('#list-body');
@@ -689,7 +749,7 @@ export const runSearch = debounce(async q => {
       people.forEach(p => body.append(personRow(p)));
     }
     body.append(h('div', { class: 'list-sep' }, `Messages (${msgs.length})`));
-    if (!msgs.length) body.append(h('p', { class: 'hint', style: { padding: '0 16px' } }, 'No message matches. Encrypted chats are not searchable server-side.'));
+    if (!msgs.length) body.append(h('p', { class: 'hint', style: { padding: '0 16px' } }, 'No message matches. Encrypted chats are not searchable server-side, and conversations in Private Vault are searched from inside the vault only.'));
     msgs.forEach(m => {
       const hl = (m.body || '').replace(new RegExp(`(${q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'ig'), '<mark>$1</mark>');
       body.append(h('button', {
@@ -707,10 +767,12 @@ export const runSearch = debounce(async q => {
 export async function searchInChat() {
   const q = await promptBox('Search in this chat', { label: 'Text' });
   if (!q) return;
-  const rows = await rpc('search_messages', { p_query: q, p_chat: S.chat.chat_id });
+  const fn = S.chat?.vaulted ? 'search_vault_messages' : 'search_messages';
+  const rows = await rpc(fn, { p_query: q, p_chat: S.chat.chat_id });
   modal(h('h3', { class: 'display' }, `${rows.length} hit${rows.length === 1 ? '' : 's'}`),
     h('div', { class: 'stack', style: { maxHeight: '50vh', overflowY: 'auto' } },
       rows.map(m => h('button', { class: 'result', onclick: () => { closeModal(); jumpTo(m.message_id); } },
         h('b', {}, nameOf(m.sender_id)), h('span', {}, (m.body || '').slice(0, 160)), h('small', {}, shortWhen(m.created_at))))),
+    S.chat?.e2ee && h('p', { class: 'hint' }, 'Encrypted messages have no server-side text to match, so they are not in these results.'),
     h('div', { class: 'modal-actions' }, h('button', { class: 'btn ghost', onclick: closeModal }, 'Close')));
 }

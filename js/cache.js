@@ -1,4 +1,4 @@
-// Local, per-device message cache — two layers.
+// Local, per-device message cache — two layers, and one hard rule.
 //
 //   mem   (Map, synchronous)  — what makes chat-open feel instant. Reading
 //                               it costs nothing: no promise, no I/O, no
@@ -6,6 +6,14 @@
 //   IndexedDB (async, on disk) — survives reloads/app restarts so the first
 //                               chat you open in a new session still has
 //                               something better than blank to show.
+//
+// The hard rule: a conversation in Private Vault never touches either layer.
+// This file's `wisp-cache` database is plaintext on disk — that is the whole
+// point of it — so private conversations are routed to the vault's own
+// encrypted store instead (js/vault.js), and dropCached() scrubs a
+// conversation out of here the moment it is moved in. Without that, "locked"
+// would mean a hidden row in a list with the messages still sitting in the
+// clear one devtools tab away.
 //
 // main() calls warmAllCached() as the very first thing on boot — before
 // login even resolves — to pull every thread this device has ever cached
@@ -18,6 +26,8 @@
 // WhatsApp's client works the same way, keeping its local store warm in
 // memory rather than hitting disk fresh on every chat open.
 
+import { isVaulted, getMemVaultThread, getVaultThread, setVaultThread, dropVaultThread } from './vault.js';
+
 const DB_NAME = 'wisp-cache';
 const STORE = 'threads';
 const VERSION = 1;
@@ -26,6 +36,9 @@ const mem = new Map(); // chatId -> payload
 
 /** Synchronous, zero-latency read. Returns null if not warmed yet. */
 export function getMemThread(chatId) {
+  // Private conversations live in the vault's encrypted store; while the vault
+  // is locked this correctly returns null and the thread paints nothing.
+  if (isVaulted(chatId)) return getMemVaultThread(chatId);
   return mem.get(chatId) || null;
 }
 
@@ -59,6 +72,7 @@ function readDisk(chatId) {
 }
 
 export async function getCachedThread(chatId) {
+  if (isVaulted(chatId)) return getVaultThread(chatId);
   if (mem.has(chatId)) return mem.get(chatId);
   const payload = await readDisk(chatId);
   if (payload) mem.set(chatId, payload);
@@ -66,6 +80,7 @@ export async function getCachedThread(chatId) {
 }
 
 export async function setCachedThread(chatId, payload) {
+  if (isVaulted(chatId)) return setVaultThread(chatId, payload);
   mem.set(chatId, payload); // instantly available for the rest of this session
   const db = await openDb();
   if (!db) return;
@@ -80,13 +95,39 @@ export async function setCachedThread(chatId, payload) {
 }
 
 /**
+ * Forget a conversation on this device, in both layers.
+ *
+ * Called when a conversation is moved into Private Vault: whatever plaintext
+ * history this device already had for it has to go, or the vault would be a
+ * lock on the front door of a house with the back wall missing. Also called
+ * on the way out, so the encrypted copy does not linger either.
+ */
+export async function dropCached(chatId) {
+  mem.delete(chatId);
+  await dropVaultThread(chatId).catch(() => {});
+  const db = await openDb();
+  if (!db) return;
+  return new Promise(resolve => {
+    try {
+      const tx = db.transaction(STORE, 'readwrite');
+      tx.objectStore(STORE).delete(chatId);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => resolve();
+    } catch { resolve(); }
+  });
+}
+
+/**
  * Fire-and-forget prefetch of every chat's disk cache into `mem`. Call this
  * once the chat list is known (right after login, and after every
  * loadChats() refresh) — NOT when a chat is tapped, since the whole point
  * is for the warm-up to already be done by then.
  */
 export function warmCache(chatIds) {
-  chatIds.forEach(id => { if (!mem.has(id)) readDisk(id).then(p => { if (p) mem.set(id, p); }); });
+  chatIds.forEach(id => {
+    if (isVaulted(id) || mem.has(id)) return;
+    readDisk(id).then(p => { if (p) mem.set(id, p); });
+  });
 }
 
 /**
@@ -102,6 +143,10 @@ export function warmCache(chatIds) {
  * boot: by the time the sign-in round trips above even finish, `mem` is
  * almost certainly already fully warm, and the first chat you tap after
  * signing back in is just as instant as switching chats mid-session.
+ *
+ * Nothing private can arrive this way: private conversations were never
+ * written to this database, and anything vaulted later was scrubbed by
+ * dropCached().
  */
 export function warmAllCached() {
   return openDb().then(db => new Promise(resolve => {
@@ -119,4 +164,10 @@ export function warmAllCached() {
       };
     } catch { resolve(); }
   }));
+}
+
+/** Drop every in-memory thread. Used when the vault locks, so nothing
+ *  decrypted is left sitting in a Map for the rest of the session. */
+export function forgetMem(chatIds) {
+  (chatIds || []).forEach(id => mem.delete(id));
 }

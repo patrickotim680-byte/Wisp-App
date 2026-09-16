@@ -1,0 +1,137 @@
+/* Private Vault — the few surfaces the rest of the design system does not
+   already cover. Everything else (rows, buttons, switches, sections) reuses
+   styles.css, on purpose: the vault should read as part of Wisp, not as a
+   separate application bolted on.
+
+   No entrance animations, no shimmer, no lock-shackle flourish. A security
+   screen that performs is a security screen people stop reading. */
+
+/* ── the authentication screen ──────────────────────────────────────── */
+
+.vault-gate {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  align-items: stretch;
+  padding: 34px 20px 24px;
+  max-width: 380px;
+  margin: 0 auto;
+  text-align: center;
+}
+.vault-gate h3 { margin: 0; }
+.vault-gate .muted,
+.vault-gate .hint { margin: 0; text-align: left; }
+.vault-gate > .btn { justify-content: center; }
+
+.vault-mark {
+  width: 52px;
+  height: 52px;
+  margin: 0 auto 4px;
+  border-radius: 16px;
+  display: grid;
+  place-items: center;
+  color: var(--on-accent, #fff);
+  background: var(--accent);
+}
+
+.vault-code {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-top: 4px;
+}
+.vault-code input {
+  flex: 1 1 auto;
+  min-width: 0;
+  letter-spacing: 0.14em;
+  font-variant-numeric: tabular-nums;
+}
+.vault-code .btn { flex: 0 0 auto; }
+
+.vault-err {
+  margin: 0;
+  min-height: 1.25em;
+  font-size: 0.86rem;
+  line-height: 1.45;
+  text-align: left;
+  color: var(--danger);
+}
+
+.vault-points {
+  margin: 2px 0 6px;
+  padding-left: 18px;
+  text-align: left;
+  color: var(--ink-2, inherit);
+  font-size: 0.86rem;
+  line-height: 1.5;
+}
+.vault-points li { margin: 4px 0; }
+
+/* ── inside the vault ────────────────────────────────────────────── */
+
+.vault-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line, rgba(0, 0, 0, 0.08));
+}
+.vault-bar-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-right: auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--ink-2, inherit);
+}
+.vault-bar-label svg { flex: 0 0 auto; }
+
+/* The way in, at the end of the chat list. Quiet by design: it says the vault
+   exists, never what is in it — no count, no preview, no timestamp. */
+.vault-entry { opacity: 0.92; }
+.vault-entry .row-prev { font-size: 0.8rem; }
+.vault-av {
+  color: var(--ink-2, inherit);
+  background: var(--surface-2, rgba(0, 0, 0, 0.06));
+  display: grid;
+  place-items: center;
+}
+
+/* ── screen guard ───────────────────────────────────────────────────
+   Painted synchronously when Wisp is backgrounded, before the browser takes
+   its app-switcher snapshot. Opaque, no blur: a blur still leaks shape and
+   colour, and a backdrop-filter needs a compositing pass we may not get in
+   time on the way out. */
+
+.vault-shroud {
+  position: fixed;
+  inset: 0;
+  z-index: 9000;
+  display: grid;
+  place-items: center;
+  gap: 10px;
+  background: var(--bg, #f6f2ec);
+  color: var(--ink-2, #4a4438);
+}
+.vault-shroud[hidden] { display: none; }
+.vault-shroud .vault-shroud-inner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.9rem;
+}
+.vault-shroud b { font-size: 1.05rem; }
+
+/* Belt and braces: while the cover is up, nothing underneath is allowed to
+   paint through it. */
+html.vault-shrouded body > *:not(#vault-shroud) { visibility: hidden; }
+
+@media (prefers-color-scheme: dark) {
+  .vault-shroud { background: var(--bg, #14120f); }
+}
