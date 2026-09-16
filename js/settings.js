@@ -5,6 +5,7 @@ import { ACCENTS, FONTS, WALLPAPERS, applySettings, saveSettings, toCustom, pars
 import { signOut, signOutEverywhere } from './auth.js';
 import { compressImage } from './media.js';
 import { openSide, openPhotoViewer } from './panels.js';
+import { privacyTier } from './notify.js';
 
 const row = (label, control, note) => h('div', { class: 'kv' },
   h('div', {}, h('span', { style: { color: 'var(--ink)' } }, label), note && h('div', { class: 'hint' }, note)), control);
@@ -56,7 +57,7 @@ function selectBox(options, value, onpick) {
     options.map(([v, l]) => h('option', { value: v, selected: v === value }, l)));
 }
 
-/* ── the from-scratch OKLCH picker ──────────────────────────────────── */
+/* ── the from-scratch OKLCH picker ────────────────────────────────── */
 function colorPicker() {
   const cur = parseCustom(S.settings.custom_accent) || ACCENTS[S.settings.accent] || ACCENTS.blue;
   let { l, c, h: hue } = cur;
@@ -110,7 +111,7 @@ function filePick(accept, cb) {
   document.body.append(i); i.click(); setTimeout(() => i.remove(), 60000);
 }
 
-/* ── sections ───────────────────────────────────────────────────── */
+/* ── sections ───────────────────────────────────── */
 /* Your own face and name sit at the top, the way they do in every messenger
    worth copying. It also means there is exactly one route to Settings — the
    duplicate avatar button in the tab bar is gone. */
@@ -264,7 +265,7 @@ function soundRow({ title, patchKey, fallback, presets, note }) {
 
     if (staged) {
       wrap.append(h('div', { class: 'kv' },
-        h('div', {}, h('span', {}, '🎵 ' + staged.file.name), h('div', { class: 'hint' }, bytes(staged.file.size) + ' — not saved yet')),
+        h('div', {}, h('span', {}, staged.file.name), h('div', { class: 'hint' }, bytes(staged.file.size) + ' — not saved yet')),
         h('div', { class: 'row-btns' },
           h('audio', { controls: true, src: staged.url, style: { height: '32px', maxWidth: '170px' } }),
           h('button', {
@@ -285,7 +286,7 @@ function soundRow({ title, patchKey, fallback, presets, note }) {
           h('button', { class: 'btn small ghost', onclick: () => { URL.revokeObjectURL(staged.url); staged = null; paint(); } }, 'Cancel'))));
     } else if (isCustom) {
       wrap.append(h('div', { class: 'kv' },
-        h('div', {}, h('span', {}, '🎵 Custom: ' + soundFileName(cur))),
+        h('div', {}, h('span', {}, 'Custom: ' + soundFileName(cur))),
         h('div', { class: 'row-btns' },
           h('button', { class: 'btn small ghost', onclick: () => new Audio(publicUrl('sounds', cur)).play().catch(oops) }, 'Preview'),
           h('button', { class: 'btn small', onclick: () => filePick('audio/*', pick) }, 'Replace'),
@@ -305,7 +306,18 @@ function notificationsSection() {
   const s = S.settings;
   return h('section', {},
     h('h3', {}, 'Notifications'),
-    row('Preview', selectBox([['full', 'Sender and message'], ['sender_only', 'Sender only'], ['hidden', 'Just “New message”']], s.notif_preview, v => saveSettings({ notif_preview: v }))),
+    /* Three tiers instead of the old preview dropdown. The middle one is what
+       most people actually want from a "hide previews" setting; the third is
+       for a screen other people can see. Both the in-app notification and the
+       push Edge Function read the same value, so what you pick here is what
+       arrives on a locked phone too. */
+    row('Privacy', selectBox([
+      ['standard', 'Standard — sender and message'],
+      ['private', 'Private — hide contents and details'],
+      ['maximum', 'Maximum privacy — generic Wisp notification'],
+    ], privacyTier(), v => saveSettings({ notif_privacy: v })),
+      'Standard shows “Sarah — Are you free tonight?”. Private and Maximum both show “Wisp — New message”; Maximum also stops counting conversations out on the lock screen and stops a tap from opening a specific conversation.'),
+    h('p', { class: 'hint' }, 'Conversations in Private Vault ignore this and always show “Wisp — New private message”, with no sender and no message.'),
     soundRow({
       title: 'Message sound', patchKey: 'notif_sound', fallback: 'chime',
       presets: [['chime', 'Chime'], ['knock', 'Knock'], ['pop', 'Pop'], ['none', 'Silent']],
@@ -379,7 +391,8 @@ async function securitySection() {
         const pin = await promptBox('Set a PIN', { type: 'password', label: 'PIN', note: 'Asked when the app loads. Checked with bcrypt in Postgres. It gates this app, not the auth session itself.' });
         if (pin) { await rpc('set_two_step_pin', { p_pin: pin }); S.settings.two_step_pin = 'set'; openSettings(); }
       },
-    }, s.two_step_pin ? 'On' : 'Off')),
+    }, s.two_step_pin ? 'On' : 'Off'),
+      'A second gate in front of the whole app on load. Separate from Private Vault, which protects specific conversations.'),
     row('Encryption identity', h('small', { class: 'hint' }, keys ? 'created ' + shortWhen(keys.created_at) : 'not created')),
     h('p', { class: 'hint' }, 'Encryption is per chat: an AES-256-GCM chat key wrapped to each member\u2019s RSA key. No forward secrecy, no safety numbers. Encrypted chats are excluded from server-side search and digests.'),
     h('h3', { style: { marginTop: '10px' } }, 'Devices'),
@@ -405,6 +418,7 @@ function accountSection() {
         },
       }, 'Export my data'),
       h('button', { class: 'btn small ghost', onclick: signOut }, 'Sign out')),
+    h('p', { class: 'hint' }, 'The export is a plaintext JSON file, so conversations in Private Vault are deliberately left out of it.'),
     h('button', {
       class: 'btn small danger', onclick: async () => {
         if (!await confirmBox('Delete this account?', 'Profile, memberships and settings go. Message bodies you sent are wiped. This cannot be undone.', 'Delete forever')) return;
@@ -415,7 +429,7 @@ function accountSection() {
     }, 'Delete account'));
 }
 
-/* ── grouped categories ───────────────────────────────────────────
+/* ── grouped categories ─────────────────────────────────
    Same section builders as before, none of them touched — just sorted
    into the groups a messenger settings screen actually has, each
    collapsed until tapped. `openCat` survives re-renders: an accent
@@ -425,6 +439,7 @@ function accountSection() {
    built, so Security's device/key fetch doesn't run on every render. */
 const CATEGORIES = [
   { key: 'account', icon: 'person', tint: 'oklch(0.6 0.03 70)', title: 'Account', sub: 'Export data, sign out, delete account', build: () => accountSection() },
+  { key: 'vault', icon: 'lock', tint: 'oklch(0.45 0.09 300)', title: 'Private Vault', sub: 'Private conversations, authentication, auto-lock', build: async () => (await import('./vault-ui.js')).vaultSettingsSection() },
   { key: 'security', icon: 'key', tint: 'oklch(0.55 0.13 38)', title: 'Security', sub: 'Two-step PIN, encryption, devices', build: () => securitySection() },
   { key: 'privacy', icon: 'shield', tint: 'oklch(0.52 0.11 148)', title: 'Privacy', sub: 'Last seen, read receipts, blocked contacts', build: () => privacySection() },
   { key: 'chats', icon: 'palette', tint: 'oklch(0.5 0.14 274)', title: 'Chats', sub: 'Theme, accent, wallpaper, text size', build: () => appearanceSection() },
@@ -451,7 +466,9 @@ function categoryRow(cfg) {
   return item;
 }
 
-export async function openSettings() {
+/** Open Settings with a category already expanded, e.g. openSettings('vault'). */
+export async function openSettings(focusCat) {
+  if (focusCat) openCat = focusCat;
   const items = CATEGORIES.map(categoryRow);
   const wrap = h('div', {},
     h('div', { class: 'side-head' }, h('h3', { class: 'display' }, 'Settings'),
