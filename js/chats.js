@@ -6,8 +6,10 @@ import { $, $$, h, clear, toast, oops, modal, closeModal, confirmBox, promptBox,
 import { applyChatStyle, applyWallpaper, applySettings, rememberChatStyle } from './theme.js';
 import { renderThread, appendMessage, patchStatus, patchReaction, loadMessages, applyCachedThread } from './thread.js';
 import { renderAttachRow } from './composer.js';
-import { notify } from './notify.js';
+import { notify, notifyPrivate } from './notify.js';
 import { getMemThread, warmCache } from './cache.js';
+import { isVaulted, isUnlocked, setVaultVisible } from './vault.js';
+import { vaultEntryNode, moveToVault, renderVaultList } from './vault-ui.js';
 
 export async function loadPeople(ids) {
   const need = [...new Set(ids.filter(Boolean))].filter(id => !S.people.has(id));
@@ -29,7 +31,7 @@ function renderFolders() {
     onclick: () => { S.folder = key; renderFolders(); renderChatList(); },
   }, count ? `${label} ${count}` : label);
   wrap.append(chip('All', null));
-  const unread = S.chats.filter(c => c.unread > 0 && !c.archived).length;
+  const unread = S.chats.filter(c => c.unread > 0 && !c.archived && !c.vaulted).length;
   wrap.append(chip('Unread', 'unread', unread || ''));
   S.folders.forEach(f => {
     const c = wrap.appendChild(chip(f.name, f.id));
@@ -53,18 +55,37 @@ function renderFolders() {
   }, '+ Tab'));
 }
 
+/**
+ * chat_overview() no longer returns conversations that live in Private Vault:
+ * their name, last message and unread count are not filtered out on the client,
+ * they are never sent. vault_overview() is only asked for once the vault has
+ * actually been unlocked on this device, and those rows are merged in carrying
+ * `vaulted: true` so every existing code path (open, thread, composer, calls)
+ * keeps working unchanged while the list renderer skips them.
+ */
 export async function loadChats() {
-  S.chats = await rpc('chat_overview');
+  const normal = await rpc('chat_overview');
+  let priv = [];
+  if (isUnlocked()) {
+    try { priv = await rpc('vault_overview') || []; } catch (e) { console.warn('vault_overview', e); }
+  }
+  S.vault.chats = priv;
+  S.chats = [...normal, ...priv];
   await loadPeople(S.chats.map(c => c.other_id));
   renderChatList();
+  if (S.view === 'vault') renderVaultList();
   updateBadge();
   // Pull every chat's last-known thread up from disk into the synchronous
   // memory cache now, in the background — so by the time a chat actually
-  // gets tapped, openChat() can paint it with no I/O wait at all.
+  // gets tapped, openChat() can paint it with no I/O wait at all. warmCache()
+  // skips private conversations: their local copy lives in the vault's own
+  // encrypted store, not in the plaintext cache.
   warmCache(S.chats.map(c => c.chat_id));
 }
 
 function matchesFolder(c) {
+  // A private conversation is never in the normal list, under any tab.
+  if (c.vaulted) return false;
   if (S.folder === 'archived') return c.archived;
   if (c.archived) return false;
   if (S.folder === 'unread') return c.unread > 0;
@@ -73,6 +94,8 @@ function matchesFolder(c) {
 }
 
 const previewText = c => {
+  // Legacy per-chat PIN. Deprecated by Private Vault, kept so a chat locked
+  // with the old PIN still behaves the way it did.
   if (c.locked) return 'Locked chat';
   if (c.e2ee && !c.last_body) return 'Encrypted message';
   const kindWord = { image: 'Photo', video: 'Video', voice: 'Voice note', audio: 'Audio',
@@ -89,6 +112,7 @@ export function renderChatList() {
   if (!rows.length) {
     body.append(h('div', { class: 'empty' }, h('p', {}, 'Nothing here'),
       h('p', { class: 'hint' }, S.folder ? 'No chats in this tab yet.' : 'Find someone in People to start.')));
+    if (!S.folder) body.append(vaultEntryNode());
     return;
   }
   rows.forEach(c => {
@@ -120,11 +144,14 @@ export function renderChatList() {
     body.append(row);
     if (p?.is_online) row.querySelector('.row-name').append(' ', h('span', { class: 'online-dot', title: 'online' }));
   });
+  // The way into the vault sits at the end of the All tab. It never reports on
+  // what is inside: no count, no preview, no timestamp.
+  if (!S.folder) body.append(vaultEntryNode());
 }
 
 /* A real context menu at the finger, not a full-width dialog in the middle of
    the screen. Only the things you'd actually reach for on a long press live
-   here; the rest (chat lock, clearing history, moving to a tab) sits in the
+   here; the rest (Private Vault, clearing history, moving to a tab) sits in the
    chat's own details panel, where there's room to explain what it does. */
 function chatMenu(c, at = {}) {
   const me = { chat_id: c.chat_id, user_id: S.me.id };
@@ -147,6 +174,7 @@ function chatMenu(c, at = {}) {
       onclick: async () => { await rpc('mark_read', { p_chat: c.chat_id }); loadChats(); } },
     { label: c.archived ? 'Unarchive' : 'Archive', icon: 'archive', on: c.archived,
       onclick: async () => { await upd('chat_members', { archived: !c.archived }, me); loadChats(); } },
+    { label: 'Move to Private Vault', icon: 'lock', onclick: () => moveToVault(c) },
     { label: 'Theme & wallpaper', icon: 'palette',
       onclick: async () => { await openChat(c.chat_id); (await import('./panels.js')).openChatStyle(); } },
     { sep: true },
@@ -163,6 +191,7 @@ function chatMenu(c, at = {}) {
 
 export function closeChat() {
   clearToasts();
+  const wasPrivate = S.chat && isVaulted(S.chat.chat_id);
   S.chatToken++; // cancel any openChat() still resolving in the background
   if (S.chat) S.pendingByChat.set(S.chat.chat_id, S.pending);
   S.pending = [];
@@ -174,12 +203,26 @@ export function closeChat() {
   applySettings();
   renderAttachRow();
   renderChatList();
+  // Closing a private conversation means private content is no longer on
+  // screen, unless the vault list itself still is — which starts the
+  // auto-relock countdown.
+  if (wasPrivate) setVaultVisible(S.view === 'vault');
 }
 
 export async function openChat(chatId) {
   clearToasts();
-  const c = S.chats.find(x => x.chat_id === chatId);
-  if (!c) { await loadChats(); return openChat(chatId); }
+
+  // A private conversation cannot be opened from anywhere without vault
+  // authentication — including a #chat/<id> deep link, a notification tap or a
+  // Saved entry that predates the move.
+  if (isVaulted(chatId) && !isUnlocked()) {
+    const { requireVault } = await import('./vault-ui.js');
+    if (!await requireVault()) return;
+  }
+
+  let c = S.chats.find(x => x.chat_id === chatId);
+  if (!c) { await loadChats(); c = S.chats.find(x => x.chat_id === chatId); }
+  if (!c) return toast('That conversation is not available.', true);
 
   // Every call gets its own token. If a newer openChat() (or closeChat())
   // starts before this one finishes, S.chatToken moves on and every check
@@ -187,6 +230,7 @@ export async function openChat(chatId) {
   // user is actually looking at with a different chat's data.
   const myToken = ++S.chatToken;
 
+  // Legacy per-chat PIN, kept working for chats locked before Private Vault.
   if (c.locked && !S.unlocked.has(chatId)) {
     const pin = await promptBox('Locked chat', { label: 'PIN', type: 'password' });
     if (myToken !== S.chatToken) return;
@@ -195,6 +239,8 @@ export async function openChat(chatId) {
     if (myToken !== S.chatToken) return;
     S.unlocked.add(chatId);
   }
+
+  if (c.vaulted) setVaultVisible(true);
 
   // Switch and blank the thread *before* any network round trip. Previously
   // the old messages stayed on screen — under the new chat's name — until
@@ -220,6 +266,8 @@ export async function openChat(chatId) {
   // Synchronous, zero-latency: if this chat is already warm in memory (see
   // warmCache()/warmAllCached()), paint its real history right now, in the
   // same tick as the tap — never a blank frame before it, not even briefly.
+  // For a private conversation this reads the vault's decrypted in-memory
+  // copy, which only exists while the vault is open.
   applyCachedThread(getMemThread(chatId));
   $('#conv-empty').hidden = true;
   $('#conv-inner').hidden = false;
@@ -265,6 +313,7 @@ export async function openChat(chatId) {
     if (myToken !== S.chatToken) return;
     c.unread = 0;
     renderChatList(); updateBadge();
+    if (S.view === 'vault') renderVaultList();
   } catch (e) { oops(e); }
 }
 
@@ -280,7 +329,16 @@ function activeTypers(chatId) {
 export function renderConvHeader() {
   const c = S.chat; if (!c) return;
   const p = person(c.other_id);
-  $('#conv-name').textContent = c.name || 'Chat';
+  const name = clear($('#conv-name'));
+  name.append(c.name || 'Chat');
+  // Inside a private conversation, say so. This is not on the normal chat list
+  // — the point is that the normal interface does not advertise which
+  // conversations are private, not that you cannot tell once you are in one.
+  if (c.vaulted) {
+    const mark = iconEl('lock', 13);
+    mark.classList.add('conv-private-mark');
+    name.append(' ', mark);
+  }
   const img = $('#conv-avatar');
   // Always something to look at, and always tappable: the header portrait is
   // the way into someone's photo and profile now, so it can't be missing.
@@ -295,7 +353,7 @@ export function renderConvHeader() {
   $('#btn-call-audio').hidden = c.type === 'broadcast';
 }
 
-/* ── realtime ────────────────────────────────────────────────────────── */
+/* ── realtime ─────────────────────────────────────────────────────── */
 export function subscribeChat(chatId) {
   channel('chat', ch => ch
     .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages', filter: `chat_id=eq.${chatId}` },
@@ -327,6 +385,20 @@ export function subscribeChat(chatId) {
 export function subscribeGlobal() {
   channel('global', ch => ch
     .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, async ({ new: m }) => {
+      // A message in a private conversation stops here. No chat list refresh
+      // that could paint a name or a preview, no thread write, no unread badge
+      // — just a notification that says nothing. The realtime payload itself
+      // carries only ciphertext, because a vaulted conversation is end-to-end
+      // encrypted, so there is no plaintext body in this event to leak.
+      if (isVaulted(m.chat_id)) {
+        if (m.sender_id === S.me.id) return;
+        const openHere = S.chat?.chat_id === m.chat_id && document.visibilityState === 'visible';
+        if (isUnlocked()) await loadChats();
+        if (openHere) return;
+        if (S.settings.focus_mode || inQuietHours()) return;
+        notifyPrivate();
+        return;
+      }
       await loadChats();
       if (m.sender_id === S.me.id) return;
       if (S.chat?.chat_id === m.chat_id && document.visibilityState === 'visible') return;
@@ -355,14 +427,17 @@ export function inQuietHours() {
 setInterval(() => { if (S.chat) renderConvHeader(); }, 3000);
 
 export function updateBadge() {
-  const n = S.chats.filter(c => !c.muted && !c.archived).reduce((a, c) => a + (c.unread || 0), 0);
+  // Private conversations are left out. A badge that climbs when a private
+  // message arrives is a notification about a private conversation, shown on a
+  // surface that is visible without authenticating.
+  const n = S.chats.filter(c => !c.muted && !c.archived && !c.vaulted).reduce((a, c) => a + (c.unread || 0), 0);
   const b = $('#badge-unread');
   b.hidden = !n; b.textContent = n > 99 ? '99+' : String(n);
   document.title = n ? `(${n}) Wisp` : 'Wisp';
   if (navigator.setAppBadge) n ? navigator.setAppBadge(n) : navigator.clearAppBadge?.();
 }
 
-/* ── starting chats ───────────────────────────────────────────────────── */
+/* ── starting chats ────────────────────────────────────────────────── */
 export async function startDm(userId) {
   const id = await rpc('get_or_create_dm', { p_other: userId });
   await loadChats();
