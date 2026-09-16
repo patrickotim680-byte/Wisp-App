@@ -7,18 +7,18 @@ import { applyWallpaper, applyChatStyle, saveSettings, saveChatStyle, startStyle
          cancelStyleDraft, styleDraft, paintWall, WALLPAPERS, ACCENTS, toCustom } from './theme.js';
 import { thumbUrl, compressImage } from './media.js';
 import { jumpTo } from './thread.js';
+import { turnLockOn, turnLockOff, changePin, setRelock, setLockPrefs, forgotPinFlow,
+         relockOptions, searchableLockedIds, isUnlocked } from './chatlock.js';
+import { liveCallFor, joinCall, refreshLiveCalls } from './calls.js';
+import { joinBannerText } from './callcore.js';
 
 export function openSide(node) {
   const side = $('#side'), app = $('#app');
   if (!node) {
     side.hidden = true; app.classList.remove('has-side');
-    // Settings (and anything else opened from the nav rail) moves the rail's
-    // sliding indicator to its own tab via setActiveNav() in goto(). Closing
-    // the side panel only ever hides an overlay — it never changes which
-    // underlying view (chats/people/calls/saved) is actually behind it, so
-    // the indicator has to be pulled back to S.view here. Without this, tab
-    // order chats → settings → close left "Settings" glowing in the rail
-    // while the chat list was the thing on screen.
+    // Closing the side panel only ever hides an overlay — it never changes
+    // which underlying view (chats/people/calls/saved) is actually behind it,
+    // so the rail indicator has to be pulled back to S.view here.
     setActiveNav(S.view);
     return;
   }
@@ -49,10 +49,7 @@ const sw = (val, fn) => {
   return b;
 };
 
-/* ── photo viewer ───────────────────────────────────────────────────────
-   Tapping a portrait anywhere in the app lands here. It used to land nowhere
-   at all: avatars were decoration, and the only large copy of anyone's photo
-   was the 84px one in the details panel. */
+/* ── photo viewer ────────────────────────────────────────────────── */
 export function openPhotoViewer(url, name = '') {
   if (!url) return toast('No photo has been set.');
   const layer = h('div', { class: 'photo-view' });
@@ -75,7 +72,7 @@ export function openPhotoViewer(url, name = '') {
   requestAnimationFrame(() => layer.classList.add('is-open'));
 }
 
-/* ── profile card ───────────────────────────────────────────────── */
+/* ── profile card ────────────────────────────────────────── */
 export async function openProfileCard(userId) {
   let p = person(userId);
   if (!p) {
@@ -117,12 +114,7 @@ export async function openProfileCard(userId) {
       h('button', { class: 'btn ghost', onclick: closeModal }, 'Close')));
 }
 
-/* ── theme & wallpaper for one chat ─────────────────────────────────────
-   Everything in here is a draft: picking a colour or a wallpaper repaints the
-   real thread behind the panel and the small preview above, and writes to
-   nothing. Apply is the only thing that touches the database, and Cancel puts
-   the chat back exactly as it was — including an uploaded photo, which is
-   only pushed to storage once it has actually been chosen. */
+/* ── theme & wallpaper for one chat ──────────────────────────────────── */
 export function openChatStyle() {
   const c = S.chat;
   if (!c) return toast('Open a chat first.');
@@ -247,11 +239,16 @@ export function openChatStyle() {
 export function convMenu(e) {
   const c = S.chat;
   if (!c) return;
+  const live = liveCallFor(c.chat_id);
   popMenu([
+    live && { label: live.i_am_in ? 'Open the call' : 'Join the call', icon: live.kind === 'video' ? 'video' : 'call',
+      onclick: () => joinCall(live.call_id, { kind: live.kind }) },
     { label: c.type === 'dm' ? 'Contact info' : 'Group info', icon: 'info', onclick: openChatInfo },
     { label: 'Search in chat', icon: 'search', onclick: searchInChat },
     { label: 'Catch me up', icon: 'spark', onclick: () => openDigest() },
     { sep: true },
+    { label: c.locked ? 'Chat lock settings' : 'Lock this chat', icon: 'lock', on: c.locked,
+      onclick: () => c.locked ? openChatInfo() : turnLockOn(c).then(() => openChatInfo()) },
     { label: 'Theme & wallpaper', icon: 'palette', onclick: openChatStyle },
     { label: 'Media & files', icon: 'image', onclick: sharedMedia },
     { label: 'Export conversation', icon: 'download', onclick: exportChat },
@@ -271,13 +268,64 @@ export async function clearHistory() {
   loadChats();
 }
 
-/* ── chat details ─────────────────────────────────────────────── */
+/* ── chat lock section ─────────────────────────────────────────────────
+   The old version of this was a single button that toggled a PIN: tapping it
+   while locked simply removed the lock, with nothing asked. Everything here
+   goes through chatlock.js, which goes through Postgres, which now demands the
+   current PIN before it will change or remove anything. */
+function lockSection(c, redraw) {
+  const rows = [h('h3', {}, 'Chat lock')];
+
+  rows.push(seg('Lock this chat',
+    h('button', {
+      class: 'btn small' + (c.locked ? ' primary' : ''),
+      onclick: async () => {
+        const changed = c.locked ? await turnLockOff(c) : await turnLockOn(c);
+        if (changed) redraw();
+      },
+    }, c.locked ? 'On' : 'Off'),
+    c.locked
+      ? 'A PIN in front of this one chat, checked in Postgres with bcrypt. Five wrong tries starts a cooldown that gets longer each time.'
+      : 'A PIN in front of this one chat. Also hides its messages from the chat list, from notifications and from search.'));
+
+  if (!c.locked) return h('section', {}, ...rows);
+
+  rows.push(seg('Change PIN',
+    h('button', { class: 'btn small', onclick: async () => { await changePin(c); redraw(); } }, 'Change'),
+    'Asks for the current PIN first.'));
+
+  rows.push(seg('Ask again',
+    h('select', {
+      onchange: async e => { await setRelock(c, e.target.value); toast('Saved'); },
+    }, relockOptions().map(([v, l]) => h('option', { value: v, selected: c.lock_relock === v }, l))),
+    'When Wisp should put the lock back. "As soon as I leave" also relocks the moment the app goes to the background.'));
+
+  rows.push(seg('Hide the preview',
+    sw(c.lock_hide_preview !== false, async v => { await setLockPrefs(c, { hidePreview: v }); redraw(); }),
+    'The chat list shows "Locked chat" instead of the last message. The redaction happens in SQL, so the text never reaches this device.'));
+
+  rows.push(seg('Hide from the chat list',
+    sw(!!c.lock_hide_in_list, async v => { await setLockPrefs(c, { hideInList: v }); redraw(); }),
+    'The chat only appears under the Locked tab.'));
+
+  rows.push(seg('Forgot the PIN',
+    h('button', { class: 'btn small ghost', onclick: async () => { await forgotPinFlow(c); redraw(); } }, 'Use my password'),
+    'Your account password removes the lock. The PIN itself is a bcrypt hash and cannot be read back by anyone, including you.'));
+
+  rows.push(h('p', { class: 'lock-note' },
+    'What this does not do: it is not encryption, and it is not protection from someone with your account password. It stops whoever is holding your phone. For content the server cannot read either, turn on encryption above.'));
+
+  return h('section', {}, ...rows);
+}
+
+/* ── chat details ───────────────────────────────────── */
 export async function openChatInfo() {
   const c = S.chat; if (!c) return;
   const meRow = S.members.find(m => m.user_id === S.me.id);
   const iAmAdmin = ['owner', 'admin'].includes(meRow?.role);
   const p = c.type === 'dm' ? person(c.other_id) : null;
   const photo = c.icon_url || p?.photo_url || null;
+  const live = liveCallFor(c.chat_id);
   const wrap = h('div', {});
 
   wrap.append(sideHead(c.name || 'Details', () => openSide(null)));
@@ -290,6 +338,14 @@ export async function openChatInfo() {
     h('b', { class: 'display' }, (p?.nickname || c.name) || 'Chat'),
     h('small', { class: 'hint' }, p ? (lastSeenText(p) || '') : `${S.members.length} members`),
     p?.about && h('p', { class: 'muted' }, p.about),
+    live && h('button', {
+      class: 'btn primary', onclick: () => joinCall(live.call_id, { kind: live.kind }),
+    }, iconEl(live.kind === 'video' ? 'video' : 'call', 17),
+      live.i_am_in ? 'Back to the call' : 'Join the call'),
+    live && h('p', { class: 'hint' }, joinBannerText({
+      kind: live.kind, names: live.names || [], participants: live.participants,
+      capacity: live.capacity, iAmIn: live.i_am_in,
+    })),
     h('div', { class: 'hero-acts' },
       c.type !== 'broadcast' && h('button', { class: 'btn', onclick: async () => (await import('./calls.js')).startCall('audio') }, iconEl('call', 17), 'Voice'),
       c.type !== 'broadcast' && h('button', { class: 'btn', onclick: async () => (await import('./calls.js')).startCall('video') }, iconEl('video', 17), 'Video'),
@@ -397,7 +453,8 @@ export async function openChatInfo() {
       iAmAdmin && seg('Who can message', h('select', {
         onchange: e => upd('chats', { perm_send: e.target.value }, { id: c.chat_id }),
       }, h('option', { value: 'everyone', selected: chatRow.perm_send === 'everyone' }, 'Everyone'),
-        h('option', { value: 'admins', selected: chatRow.perm_send === 'admins' }, 'Admins only'))),
+        h('option', { value: 'admins', selected: chatRow.perm_send === 'admins' }, 'Admins only')),
+      ),
       iAmAdmin && seg('Who can add members', h('select', {
         onchange: e => upd('chats', { perm_add_members: e.target.value }, { id: c.chat_id }),
       }, h('option', { value: 'everyone', selected: chatRow.perm_add_members === 'everyone' }, 'Everyone'),
@@ -425,19 +482,17 @@ export async function openChatInfo() {
     S.folders.length ? seg('Tab', h('select', {
       onchange: async e => { await upd('chat_members', { folder_id: e.target.value || null }, { chat_id: c.chat_id, user_id: S.me.id }); (await import('./chats.js')).loadChats(); },
     }, h('option', { value: '' }, 'None'),
-      ...S.folders.map(f => h('option', { value: f.id, selected: f.id === c.folder_id }, f.name))) ) : null,
-    seg('Chat lock', h('button', {
-      class: 'btn small', onclick: async () => {
-        if (c.locked) { await rpc('set_chat_lock', { p_chat: c.chat_id, p_pin: null }); }
-        else {
-          const pin = await promptBox('Chat lock', { label: 'PIN', type: 'password', note: 'Asked once per session before this chat opens.' });
-          if (!pin) return;
-          await rpc('set_chat_lock', { p_chat: c.chat_id, p_pin: pin });
-        }
-        (await import('./chats.js')).loadChats();
-        openChatInfo();
-      },
-    }, c.locked ? 'On' : 'Off'), 'A PIN in front of this one chat, checked in Postgres.')));
+      ...S.folders.map(f => h('option', { value: f.id, selected: f.id === c.folder_id }, f.name))) ) : null));
+
+  // Its own section, because it now has five controls and a warning rather
+  // than one ambiguous On/Off button.
+  wrap.append(lockSection(c, async () => {
+    const { loadChats } = await import('./chats.js');
+    await loadChats();
+    const fresh = S.chats.find(x => x.chat_id === c.chat_id);
+    if (fresh) S.chat = fresh;
+    openChatInfo();
+  }));
 
   wrap.append(h('section', {},
     h('h3', {}, 'Housekeeping'),
@@ -459,7 +514,7 @@ export async function sharedMedia() {
       grid.append(h('img', { src: u, loading: 'lazy', onclick: () => jumpTo(m.id) }));
     } else {
       docs.append(h('button', { class: 'result', onclick: () => jumpTo(m.id) },
-        h('b', {}, m.attachment?.name || m.kind), h('small', {}, `${bytes(m.attachment?.size || 0)} · ${shortWhen(m.created_at)}`)));
+        h('b', {}, m.attachment?.name || m.kind), h('small', {}, `${bytes(m.attachment?.size || 0)} \u00b7 ${shortWhen(m.created_at)}`)));
     }
   });
   openSide(h('div', {},
@@ -488,7 +543,7 @@ export async function exportChat() {
   } catch (e) { oops(e); }
 }
 
-/* ── catch me up ───────────────────────────────────────────────── */
+/* ── catch me up ───────────────────────────────────── */
 export async function openDigest(hours = 12) {
   try {
     const d = await rpc('chat_digest', { p_chat: S.chat.chat_id, p_hours: hours });
@@ -511,13 +566,13 @@ export async function openDigest(hours = 12) {
         d.links?.length ? h('div', {}, h('b', {}, 'Links'),
           h('div', { class: 'stack' }, d.links.slice(0, 8).map(u => h('a', { href: u, target: '_blank', rel: 'noopener', class: 'hint' }, u.slice(0, 70))))) : null,
         d.files?.length ? h('div', {}, h('b', {}, 'Files'),
-          h('div', { class: 'stack' }, d.files.slice(0, 8).map(f => h('small', { class: 'hint' }, `${f.name || f.kind} · ${shortWhen(f.at)}`)))) : null),
+          h('div', { class: 'stack' }, d.files.slice(0, 8).map(f => h('small', { class: 'hint' }, `${f.name || f.kind} \u00b7 ${shortWhen(f.at)}`)))) : null),
       h('p', { class: 'hint' }, 'Computed in SQL over the window, no model involved. Encrypted chats cannot be summarised server-side.'),
       h('div', { class: 'modal-actions' }, h('button', { class: 'btn ghost', onclick: closeModal }, 'Close')));
   } catch (e) { oops(e); }
 }
 
-/* ── list-pane views ──────────────────────────────────────────────── */
+/* ── list-pane views ─────────────────────────────────────── */
 export async function viewPeople() {
   const body = clear($('#list-body'));
   $('#list-title').textContent = 'People';
@@ -561,45 +616,67 @@ function personMenu(p, at) {
   ], { ...at, title: p.nickname || p.display_name });
 }
 
+/* Calls tab. Anything live sits at the top with a Join button — that, the
+   thread banner and a #call/<id> link are the three ways into a call that is
+   already going. */
 export async function viewCalls(tab = 'all') {
   const body = clear($('#list-body'));
   $('#list-title').textContent = 'Calls';
   const chips = clear($('#folders'));
   [['all', 'All'], ['missed', 'Missed'], ['outgoing', 'Outgoing'], ['incoming', 'Incoming']].forEach(([k, l]) =>
     chips.append(h('button', { class: 'chip' + (tab === k ? ' is-on' : ''), onclick: () => viewCalls(k) }, l)));
-  const allRows = await (await import('./calls.js')).callHistory();
+
+  const [allRows, liveRows] = await Promise.all([
+    (await import('./calls.js')).callHistory(),
+    refreshLiveCalls(),
+  ]);
+
+  if (tab === 'all' && liveRows?.length) {
+    body.append(h('div', { class: 'list-sep' }, 'Happening now'));
+    liveRows.forEach(l => body.append(h('button', {
+      class: 'row is-live', onclick: () => joinCall(l.call_id, { kind: l.kind }),
+    }, h('div', { class: 'av' }, iconEl(l.kind === 'video' ? 'video' : 'call', 19)),
+      h('div', { class: 'row-main' },
+        h('div', { class: 'row-top' }, h('span', { class: 'row-name' }, l.chat_name || 'Call')),
+        h('div', { class: 'row-prev' }, joinBannerText({
+          kind: l.kind, names: l.names || [], participants: l.participants,
+          capacity: l.capacity, iAmIn: l.i_am_in,
+        }))),
+      h('div', { class: 'row-side' },
+        h('span', { class: 'btn small primary' },
+          l.i_am_in ? 'Open' : l.participants >= l.capacity ? 'Full' : 'Join')))));
+  }
+
   const rows = allRows.filter(r => {
     if (tab === 'all') return true;
     if (tab === 'missed') return r.state === 'missed';
     const out = r.caller_id === S.me.id;
     return tab === 'outgoing' ? out : !out;
   });
-  if (!rows.length) return void body.append(h('div', { class: 'empty' },
-    h('p', {}, tab === 'all' ? 'No calls yet' : `No ${tab} calls`),
-    h('p', { class: 'hint' }, 'Voice and video calls you make show up here.')));
+  if (!rows.length && !(tab === 'all' && liveRows?.length)) {
+    return void body.append(h('div', { class: 'empty' },
+      h('p', {}, tab === 'all' ? 'No calls yet' : `No ${tab} calls`),
+      h('p', { class: 'hint' }, 'Voice and video calls you make show up here.')));
+  }
+  if (rows.length && tab === 'all' && liveRows?.length) body.append(h('div', { class: 'list-sep' }, 'Earlier'));
   rows.forEach(r => {
     const out = r.caller_id === S.me.id;
-    // r.chats.name only exists for named group chats; for a DM it's null in
-    // the raw table, so fall back to the same chat_overview() name the main
-    // Chats list already resolved for this chat (person's real display name).
     const chatMeta = S.chats.find(x => x.chat_id === r.chat_id);
     const name = chatMeta?.name || r.chats?.name || (out ? 'Outgoing call' : 'Incoming call');
     const label = { missed: 'Missed', declined: 'Declined', ended: out ? 'Outgoing' : 'Incoming', accepted: 'In progress', ringing: 'Ringing', failed: 'Failed' }[r.state];
     body.append(h('button', {
-      // Used to just open the chat. Now it opens a details sheet with the
-      // exact call time plus message/call-back/schedule actions, so seeing
-      // "who called and when" and acting on it doesn't require two taps.
       class: 'row', onclick: async () => {
         (await import('./calls.js')).openCallDetails({
           name, kind: r.kind, state: r.state, duration: r.duration,
-          startedAt: r.started_at, chatId: r.chat_id, alreadyOpen: S.chat?.chat_id === r.chat_id,
+          startedAt: r.started_at, chatId: r.chat_id, callId: r.id,
+          alreadyOpen: S.chat?.chat_id === r.chat_id,
         });
       },
     }, h('div', { class: 'av' }, iconEl(r.kind === 'video' ? 'video' : 'call', 19)),
       h('div', { class: 'row-main' },
         h('div', { class: 'row-top' }, h('span', { class: 'row-name' }, name)),
         h('div', { class: 'row-prev', style: r.state === 'missed' ? { color: 'var(--danger)' } : {} },
-          `${label}${r.duration ? ' · ' + dur(r.duration) : ''}`)),
+          `${label}${r.duration ? ' \u00b7 ' + dur(r.duration) : ''}`)),
       h('div', { class: 'row-side' }, shortWhen(r.started_at))));
   });
 }
@@ -624,6 +701,9 @@ export async function viewSaved(tab = 'starred') {
     h('p', { class: 'hint' }, 'Hover a message and use the star or the bookmark.')));
   data.forEach(r => {
     const m = r.messages; if (!m) return;
+    // A starred message from a chat that is locked right now is listed by chat
+    // name only: the point of the lock is that its text is not on this screen.
+    const locked = S.chats.find(c => c.chat_id === m.chat_id)?.locked && !isUnlocked(m.chat_id);
     body.append(h('button', {
       class: 'result', onclick: async () => {
         const { openChat } = await import('./chats.js');
@@ -631,8 +711,8 @@ export async function viewSaved(tab = 'starred') {
         setTimeout(() => jumpTo(m.id), 400);
       },
     }, h('b', {}, m.chats?.name || 'Chat'),
-      h('span', {}, (m.body || `[${m.kind}]`).slice(0, 140)),
-      h('small', {}, [nameOf(m.sender_id), shortWhen(m.created_at), r.note].filter(Boolean).join(' · '))));
+      h('span', {}, locked ? 'In a locked chat' : (m.body || `[${m.kind}]`).slice(0, 140)),
+      h('small', {}, [locked ? '' : nameOf(m.sender_id), shortWhen(m.created_at), locked ? '' : r.note].filter(Boolean).join(' \u00b7 '))));
   });
 }
 
@@ -644,7 +724,7 @@ async function renderScheduled(body) {
   pend.forEach(r => body.append(h('div', { class: 'result' },
     h('b', {}, r.chats?.name || 'Chat'),
     h('span', {}, (r.body || '').slice(0, 140)),
-    h('small', {}, `${new Date(r.send_at).toLocaleString()}${r.recurrence ? ' · repeats ' + r.recurrence : ''}`),
+    h('small', {}, `${new Date(r.send_at).toLocaleString()}${r.recurrence ? ' \u00b7 repeats ' + r.recurrence : ''}`),
     h('div', { class: 'row-btns' },
       h('button', {
         class: 'btn small', onclick: async () => {
@@ -666,13 +746,17 @@ async function renderScheduled(body) {
     body.append(h('div', { class: 'list-sep' }, 'History'));
     seen.slice(0, 20).forEach(r => body.append(h('div', { class: 'result' },
       h('b', {}, r.chats?.name || 'Chat'), h('span', {}, (r.body || '').slice(0, 100)),
-      h('small', {}, `${r.status} · ${shortWhen(r.send_at)}`))));
+      h('small', {}, `${r.status} \u00b7 ${shortWhen(r.send_at)}`))));
   }
 }
 
 export const viewScheduled = () => viewSaved('scheduled');
 
-/* ── search across everything ───────────────────────────────────────── */
+/* ── search across everything ────────────────────────────────────────────
+   p_unlocked is the list of locked chats this session has actually unlocked.
+   Anything else that is locked is filtered out inside search_messages(), so a
+   locked chat's text is never in the response at all — it is not hidden here
+   after the fact. */
 export const runSearch = debounce(async q => {
   const { renderChatList } = await import('./chats.js');
   const body = $('#list-body');
@@ -681,7 +765,7 @@ export const runSearch = debounce(async q => {
   $('#list-title').textContent = `“${q}”`;
   try {
     const [msgs, people] = await Promise.all([
-      rpc('search_messages', { p_query: q, p_chat: null }),
+      rpc('search_messages', { p_query: q, p_chat: null, p_unlocked: searchableLockedIds() }),
       rpc('search_people', { p_query: q }),
     ]);
     if (people.length) {
@@ -689,7 +773,7 @@ export const runSearch = debounce(async q => {
       people.forEach(p => body.append(personRow(p)));
     }
     body.append(h('div', { class: 'list-sep' }, `Messages (${msgs.length})`));
-    if (!msgs.length) body.append(h('p', { class: 'hint', style: { padding: '0 16px' } }, 'No message matches. Encrypted chats are not searchable server-side.'));
+    if (!msgs.length) body.append(h('p', { class: 'hint', style: { padding: '0 16px' } }, 'No message matches. Encrypted chats are not searchable server-side, and locked chats are left out until you unlock them.'));
     msgs.forEach(m => {
       const hl = (m.body || '').replace(new RegExp(`(${q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'ig'), '<mark>$1</mark>');
       body.append(h('button', {
@@ -699,7 +783,7 @@ export const runSearch = debounce(async q => {
           setTimeout(() => jumpTo(m.message_id), 400);
         },
       }, h('b', {}, m.chat_name || 'Chat'), h('span', { html: hl }),
-        h('small', {}, `${nameOf(m.sender_id)} · ${shortWhen(m.created_at)}`)));
+        h('small', {}, `${nameOf(m.sender_id)} \u00b7 ${shortWhen(m.created_at)}`)));
     });
   } catch (e) { oops(e); }
 }, 300);
@@ -707,7 +791,9 @@ export const runSearch = debounce(async q => {
 export async function searchInChat() {
   const q = await promptBox('Search in this chat', { label: 'Text' });
   if (!q) return;
-  const rows = await rpc('search_messages', { p_query: q, p_chat: S.chat.chat_id });
+  const rows = await rpc('search_messages', {
+    p_query: q, p_chat: S.chat.chat_id, p_unlocked: searchableLockedIds(),
+  });
   modal(h('h3', { class: 'display' }, `${rows.length} hit${rows.length === 1 ? '' : 's'}`),
     h('div', { class: 'stack', style: { maxHeight: '50vh', overflowY: 'auto' } },
       rows.map(m => h('button', { class: 'result', onclick: () => { closeModal(); jumpTo(m.message_id); } },
