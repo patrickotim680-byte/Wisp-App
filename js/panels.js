@@ -18,7 +18,8 @@ export function openSide(node) {
     // underlying view (chats/people/calls/saved) is actually behind it, so
     // the indicator has to be pulled back to S.view here. Without this, tab
     // order chats → settings → close left "Settings" glowing in the rail
-    // while the chat list was the thing on screen.
+    // while the chat list was the thing on screen. The vault lives inside the
+    // Chats tab, so it points there.
     setActiveNav(S.view === 'vault' ? 'chats' : S.view);
     return;
   }
@@ -250,7 +251,7 @@ export function convMenu(e) {
   // A private conversation is not summarised or exported. Both would take its
   // contents out through a surface the vault does not cover — a digest computed
   // on the server, and a plaintext file in a downloads folder. The server
-  // refuses these for vaulted conversations too; this just doesn't offer them.
+  // refuses both for vaulted conversations; this simply doesn't offer them.
   const priv = !!c.vaulted;
   popMenu([
     { label: c.type === 'dm' ? 'Contact info' : 'Group info', icon: 'info', onclick: openChatInfo },
@@ -272,8 +273,8 @@ export async function clearHistory() {
   await rpc('clear_history', { p_chat: c.chat_id });
   const { loadChats } = await import('./chats.js');
   const { loadMessages } = await import('./thread.js');
-  // Drop the local copy as well, encrypted or not — clearing history that leaves
-  // the messages in an on-device cache is not clearing history.
+  // Drop the local copy too, encrypted or not — clearing history that leaves the
+  // messages sitting in an on-device cache is not clearing history.
   await (await import('./cache.js')).dropCached(c.chat_id);
   await loadMessages();
   loadChats();
@@ -420,14 +421,19 @@ export async function openChatInfo() {
       .map(([v, l]) => h('option', { value: v, selected: c.disappear_seconds === v }, l))),
       'Enforced by RLS plus a purge job, not just hidden in the UI.'),
     seg('Encryption', sw(c.e2ee, async v => {
-      if (c.vaulted && !v) { toast('A conversation in Private Vault stays encrypted. Move it out first.', true); throw new Error('vaulted'); }
+      // A private conversation stays encrypted: that is what keeps the server
+      // from holding a readable copy, and what keeps it out of server-side
+      // search, digests and push payloads. The server refuses this too (see
+      // 20260916_private_vault_guards.sql) — the message is thrown rather than
+      // toasted so the switch reverts with exactly one explanation on screen.
+      if (c.vaulted && !v) throw new Error('A conversation in Private Vault stays encrypted. Move it out of the vault first, then decide about encryption.');
       if (v && !S.keys && !await (await import('./auth.js')).unlockKeysInteractive()) return;
       if (v) await (await import('./crypto.js')).chatKey(c.chat_id, S.members.map(m => m.user_id));
       await rpc('set_chat_e2ee', { p_chat: c.chat_id, p_on: v });
       (await import('./chats.js')).loadChats();
       toast(v ? 'New messages will be encrypted.' : 'Encryption off.');
     }), c.vaulted
-      ? 'On, and kept on: a conversation in Private Vault is end-to-end encrypted so the server holds no readable copy of it.'
+      ? 'On, and kept on: a conversation in Private Vault is end-to-end encrypted, so the server holds no readable copy of it.'
       : 'Applies to text from here on. Old messages keep their old state.'),
     seg('Notifications', h('select', {
       onchange: e => upd('chat_members', { notify_level: e.target.value }, { chat_id: c.chat_id, user_id: S.me.id }),
@@ -460,7 +466,7 @@ export async function openChatInfo() {
         openChatInfo();
       },
     }, 'Turn off'),
-      'A PIN in front of this one chat, and nothing more — it did not encrypt anything or change search, media or notifications. Private Vault replaces it.')));
+      'A PIN in front of this one chat, and nothing more — it did not encrypt anything, and it did not change search, media or notifications. Private Vault replaces it.')));
 
   wrap.append(h('section', {},
     h('h3', {}, 'Housekeeping'),
@@ -478,13 +484,13 @@ export async function sharedMedia() {
   if (!c) return;
   // p_vault is an explicit opt-in. The server refuses to list a private
   // conversation's media without it, so a caller that has not thought about
-  // whether it is inside the vault gets an error instead of private photos.
+  // whether it is inside the vault gets an error rather than private photos.
   const rows = await rpc('shared_media', { p_chat: c.chat_id, p_vault: !!c.vaulted });
   const grid = h('div', { class: 'gallery' });
   const docs = h('div', { class: 'stack' });
   rows.forEach(async m => {
     if (m.kind === 'image' || m.kind === 'video') {
-      const u = await thumbUrl(m.attachment).catch(() => null);
+      const u = await thumbUrl(m.attachment);
       if (u) grid.append(h('img', { src: u, loading: 'lazy', onclick: () => jumpTo(m.id) }));
     } else {
       docs.append(h('button', { class: 'result', onclick: () => jumpTo(m.id) },
@@ -666,7 +672,7 @@ export async function viewSaved(tab = 'starred') {
       h('p', {}, tab === 'starred' ? 'Nothing starred' : 'Nothing saved for later'),
       h('p', { class: 'hint' }, 'Hover a message and use the star or the bookmark.')));
     if (hiddenCount) body.append(h('p', { class: 'hint', style: { padding: '0 16px' } },
-      `${hiddenCount} saved message${hiddenCount === 1 ? '' : 's'} belong${hiddenCount === 1 ? 's' : ''} to a private conversation and only appear inside Private Vault.`));
+      `${hiddenCount} saved message${hiddenCount === 1 ? '' : 's'} ${hiddenCount === 1 ? 'belongs' : 'belong'} to a private conversation and only appear inside Private Vault.`));
     return;
   }
   rowsIn.forEach(r => {
