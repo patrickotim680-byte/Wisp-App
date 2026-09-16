@@ -10,6 +10,7 @@ The name is Wisp throughout: UI, manifest, README.
 ```
 index.html            app shell
 styles.css            design system (OKLCH tokens, all themeable at runtime)
+vault.css             Private Vault surfaces (gate, vault bar, screen guard)
 sw.js                 service worker: shows pushes, handles notification clicks
 manifest.webmanifest  PWA manifest
 api/config.js         Vercel function: hands the client SUPABASE_URL + anon key + ICE servers
@@ -18,17 +19,22 @@ js/db.js              Supabase client, query/RPC/storage/realtime helpers
 js/state.js           app state + tiny pub/sub
 js/auth.js            sign up/in, reset, two-step PIN, sessions, presence
 js/crypto.js          optional per-chat E2EE (WebCrypto)
+js/vault.js           Private Vault security core: keys, encrypted local store, lifecycle
+js/vault-ui.js        Private Vault section: gate, list, in-vault search, settings
+js/cache.js           local message cache; routes private chats to the vault store
 js/theme.js           settings -> CSS custom properties
 js/chats.js           chat list, folders/tabs, realtime, per-chat controls
 js/thread.js          message rendering, ticks, reactions, pins, forwarding
 js/composer.js        sending, media staging, voice notes, polls, scheduling
-js/media.js           client-side compression, poster frames, uploads
+js/media.js           client-side compression, poster frames, uploads, private-media crypto
 js/calls.js           WebRTC 1:1 + small mesh, signaling over Postgres
 js/panels.js          chat details, digest, saved, scheduled, people, search
 js/settings.js        every customization surface, incl. the OKLCH picker
 js/notify.js          local notifications, sounds, device registration
 js/app.js             boot + routing
+docs/PRIVATE-VAULT.md Private Vault: threat model, architecture, limits, test list
 supabase/schema.sql   everything: tables, indexes, RLS, RPCs, triggers, buckets, cron
+supabase/migrations/  incremental changes to run after schema.sql
 supabase/functions/push-notify     FCM HTTP v1 sender (fires on message insert)
 supabase/functions/link-preview    OpenGraph fetch + cache
 ```
@@ -40,13 +46,18 @@ supabase/functions/link-preview    OpenGraph fetch + cache
 2. SQL Editor -> paste `supabase/schema.sql` -> Run. It is safe to run once,
    top to bottom, and safe to re-run (policies are dropped and recreated,
    tables use `if not exists`).
-3. Authentication -> Providers -> keep **Email** on. For quick two-account
+3. SQL Editor -> run everything in `supabase/migrations/` in filename order.
+   All of them are idempotent. `20260916_private_vault.sql` and
+   `20260916_private_vault_guards.sql` are required for Private Vault: without
+   them the vault has no server-side isolation and the client falls back to
+   behaving as though nothing is private.
+4. Authentication -> Providers -> keep **Email** on. For quick two-account
    testing you can turn **Confirm email** off; leave it on for real use.
-4. Authentication -> URL Configuration -> Site URL = your Vercel URL (and
+5. Authentication -> URL Configuration -> Site URL = your Vercel URL (and
    `http://localhost:*` if you serve locally). Add
    `https://your-app.vercel.app` to Redirect URLs so password reset returns to
    the app.
-5. Copy Project URL and the **anon** key from Settings -> API.
+6. Copy Project URL and the **anon** key from Settings -> API.
 
 ### 2. GitHub
 ```bash
@@ -71,6 +82,10 @@ If `/api/config` is unavailable (e.g. serving the folder from any static
 host), the app shows a setup screen where you can paste the URL and anon key;
 they are stored in that browser only.
 
+Private Vault needs **HTTPS on a stable hostname**. WebAuthn is bound to the
+origin's hostname, so biometric unlock stops working if the hostname changes
+(the vault code still works).
+
 ### 4. Edge Functions
 ```bash
 supabase link --project-ref <ref>
@@ -78,6 +93,10 @@ supabase secrets set SERVICE_ROLE_KEY=<service role key>
 supabase functions deploy link-preview
 supabase functions deploy push-notify --no-verify-jwt
 ```
+Redeploying `push-notify` is required for Private Vault: notification stripping
+for private conversations happens in that function, before the payload reaches
+FCM.
+
 For pushes, also:
 ```bash
 supabase secrets set FCM_PROJECT_ID=... FCM_CLIENT_EMAIL=... FCM_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n"
@@ -113,7 +132,7 @@ vars; `/api/config` passes them to the browser as ICE servers.
 4. **Database webhook for push**: Database -> Webhooks -> Create -> table
    `public.messages`, event `INSERT`, type `Supabase Edge Functions`, function
    `push-notify`. Without this, pushes only happen while a tab is open.
-5. **Auth URL configuration**: Site URL + Redirect URLs (step 1.4 above).
+5. **Auth URL configuration**: Site URL + Redirect URLs (step 1.5 above).
 6. **FCM credentials**: Firebase console -> Project settings -> Service
    accounts -> generate a private key, then set the three `FCM_*` secrets.
 7. **TURN credentials**: created wherever you host the relay, set in Vercel.
@@ -146,8 +165,31 @@ client call -> realtime -> UI. The honest exceptions:
   unreadable. Both are surfaced in the UI.
 - **Two-step verification** is a bcrypt-checked PIN gating the app on load. It
   is a second gate, not a second factor on the Supabase session.
-- **Chat lock** is a PIN. Real biometrics need WebAuthn plus a platform
-  authenticator; not shipped.
+- **Private Vault** is real, and its limits are real too. It protects Wisp's
+  data on a device against someone who has your unlocked phone: private
+  conversations are excluded from the chat list, search, digests, exports and
+  media browsing **in SQL**, their notifications are stripped **in the push
+  function**, and their local copy is AES-256-GCM ciphertext under a key
+  derived from a dedicated vault code (PBKDF2-SHA-256, 600k iterations) or a
+  WebAuthn PRF secret. What it does not do: block screenshots (no web API
+  exists), survive a compromised OS or malware with your privileges, or stop a
+  camera pointed at the screen. The app-switcher cover is painted
+  synchronously on backgrounding, which is the strongest thing the platform
+  offers and is not a guarantee that no frame was captured. Biometric unlock
+  requires the WebAuthn **PRF** extension; where a browser lacks it, Wisp says
+  so rather than shipping a prompt that unlocks a key stored in the clear
+  beside it. There is no recovery path, no master password and no server-side
+  way in, deliberately. Full write-up: [`docs/PRIVATE-VAULT.md`](docs/PRIVATE-VAULT.md).
+- **The old per-chat chat lock** is superseded by Private Vault. It was a
+  bcrypt PIN on the member row: it hid one row behind a prompt and changed
+  nothing else, leaving the messages in the plaintext local cache, in search,
+  in the media gallery and in notification previews. `set_chat_lock` /
+  `verify_chat_lock` remain so chats locked with it still open, and moving a
+  chat into the vault clears them. The UI no longer offers it.
+- **Vault sync across devices is not built.** The *flag* follows your account,
+  so a private conversation is out of the normal list everywhere immediately;
+  the vault key does not travel, so each device gets its own code. Multi-device
+  vault sync is a separate security problem and is treated as one.
 - **Voice-note transcription and smart replies** are not shipped. Both need a
   speech/LLM service, and a fake would be worse than nothing. Inline
   translation uses the browser's built-in on-device `Translator` API where it
@@ -178,10 +220,16 @@ pack, static and live location with expiry, contact cards, inline PDF preview.
 history with durations and missed indicators, adaptive bitrate that steps down
 instead of freezing.
 **Notifications** device table, Edge Function on insert, per-chat levels,
-preview privacy, unread badge (incl. `setAppBadge`).
+three privacy tiers (standard / private / maximum) applied both in-app and in
+the push payload, unread badge (incl. `setAppBadge`).
 **Privacy** optional E2EE, four visibility controls, two-step PIN,
 disappearing messages (off/1h/24h/7d/90d + default for new chats, enforced by
 RLS and a purge job), Postgres-trigger rate limiting (25/10s, 300/h).
+**Private Vault** a protected area for sensitive conversations: dedicated
+vault code or biometric/device unlock, per-conversation local encryption,
+exclusion from the chat list, search, digests, exports and media browsing
+enforced server-side, contentless notifications, configurable auto-relock,
+one-tap lock everything, and a screen guard on backgrounding.
 **Customization** eight accents plus a from-scratch OKLCH picker,
 light/dark/system, four typefaces, three densities, text scale with live
 preview, bubble radius, wallpapers with opacity and blur, per-contact accent
@@ -190,7 +238,7 @@ contrast, animation speed, user-defined chat tabs. All of it in
 `user_settings`, so it follows the account across devices.
 **Beyond WhatsApp** scheduled and recurring sends invisible to the recipient
 until dispatch, SQL "catch me up" digest, app-wide focus mode with quiet
-hours, cross-chat full-text search, per-chat PIN lock, pinned-messages list
+hours, cross-chat full-text search, Private Vault, pinned-messages list
 separate from stars, bookmarks with notes, conversation export to text or PDF,
 screen sharing.
 
@@ -262,7 +310,7 @@ Two browser profiles, two accounts (A and B). One line per feature.
 62. **Nickname** Set a nickname for B: it shows everywhere for A, and B never sees it.
 63. **Accessibility** Toggle reduce-motion (animations stop), high-contrast (borders darken), animation speed 2x.
 64. **Notification sound** Pick Knock, hit Test, hear it. Upload a custom tone and confirm it is stored per account.
-65. **Preview privacy** Set "Just New message", receive one with the tab hidden: the popup shows no sender or text.
+65. **Notification privacy** Set Standard, receive one with the tab hidden: sender and text show. Set Private: "Wisp / New message". Set Maximum: same wording, one collapsed banner, and a tap opens Wisp rather than the chat.
 66. **Per-chat notify level** Set a group to Mentions only: a plain message is silent, `@you` notifies.
 67. **Focus mode** Turn it on: no sounds or popups anywhere, unread counts still climb. Set quiet hours around now for the same effect.
 68. **Presence** With B's tab open, A sees "online"; close it and A sees "last seen …".
@@ -275,7 +323,7 @@ Two browser profiles, two accounts (A and B). One line per feature.
 75. **Default disappearing** Set 24h as the default, start a new DM: the timer is already on.
 76. **Rate limit** Loop 30 sends in ~5s: the 26th errors with `rate_limit`, and nothing extra is stored.
 77. **Two-step PIN** Set one, reload: the PIN gate blocks the app until it is correct.
-78. **Chat lock** Lock a chat with a PIN, reload, open it: the PIN is required first.
+78. **Private Vault** The full 23-step vault checklist lives in [`docs/PRIVATE-VAULT.md`](docs/PRIVATE-VAULT.md) §12 — locking, unlocking, restarts, backgrounding, notifications, search, media, failed codes, biometric fallback, multi-device. Run all of it.
 79. **E2EE** Turn encryption on in a chat, send from A: B reads it, while `select body, cipher from messages` shows a null body and ciphertext.
 80. **E2EE limits** Search for that message globally: no hit, with the reason shown. Confirm the digest also skips it.
 81. **Scheduled send** Schedule one 2 minutes out. Confirm B sees nothing (`select * from messages` has no row), then after `dispatch_scheduled_messages()` runs it appears for both.
@@ -283,7 +331,7 @@ Two browser profiles, two accounts (A and B). One line per feature.
 83. **Edit/cancel schedule** Edit the body and time from the Scheduled view, then cancel one: status becomes `cancelled` and nothing sends.
 84. **Digest** Trade 20 messages including two questions and a link, then hit "Catch me up": totals, most-active, sparkline, unanswered questions and links all match.
 85. **Export chat** Export a conversation to .txt and check the timestamps, then Print/PDF.
-86. **Export account** Settings -> Export my data: the JSON contains profile, settings, contacts, chats and messages.
+86. **Export account** Settings -> Export my data: the JSON contains profile, settings, contacts, chats and messages, and omits anything in Private Vault.
 87. **Devices** Check the device list shows both browsers, then "Log out of all devices" and confirm both sessions end.
 88. **Account deletion** On a throwaway account, delete it: the profile is gone, its messages are wiped, and sign-in fails.
 89. **Voice call** Call A -> B, accept, talk both ways, mute (the other side goes quiet), hang up. A call entry appears with a duration.
