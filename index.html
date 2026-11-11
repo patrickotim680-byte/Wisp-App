@@ -187,7 +187,9 @@
 <div id="call" class="call" hidden>
   <div class="call-stage">
     <div class="call-audio-bg" id="call-audio-bg"></div>
-    <video id="call-remote" autoplay playsinline></video>
+    <!-- one tile per remote person, built by js/calls.js (addTile). The grid,
+         not a single <video>, is what lets a group call show and play everyone. -->
+    <div id="call-grid" class="call-grid" data-n="0"></div>
     <video id="call-local" autoplay playsinline muted></video>
     <div class="call-meta">
       <img id="call-avatar" class="call-avatar" alt="" />

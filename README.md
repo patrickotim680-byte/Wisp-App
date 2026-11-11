@@ -128,9 +128,11 @@ client call -> realtime -> UI. The honest exceptions:
 - **iOS lock-screen ringing.** Needs native CallKit + PushKit in a real iOS
   app. Impossible from a web codebase. Android high-priority FCM is wired and
   will wake a closed app; iOS gets a normal notification, not a ring.
-- **Group calls above 4 participants.** Mesh is implemented (one peer
-  connection per participant, capped at 4). Past that you need an SFU
-  (LiveKit, mediasoup). Not built, and the UI refuses instead of degrading.
+- **Group calls above 4 participants.** Mesh is implemented (every person
+  connects to every other person, capped at 4 total, with a tile per person,
+  speaking rings, and per-person drop/leave handling). Past that you need an
+  SFU (LiveKit, mediasoup). Not built, and the UI refuses instead of degrading.
+  Automated call tests live in `tests/calls/` (see its `TEST_PLAN.md`).
 - **Web push tokens.** The device table, service worker, push payloads and the
   FCM sender are all real. Minting a *browser* FCM token requires the Firebase
   JS SDK and a VAPID key pair, which is a keys-and-dashboard step, not code:
@@ -174,7 +176,7 @@ private), polls.
 documents with a size cap, in-app voice notes with waveform and 1/1.5/2x
 playback, per-chat gallery, client-side image compression, view-once, sticker
 pack, static and live location with expiry, contact cards, inline PDF preview.
-**Calls** 1:1 and mesh audio/video, mute, camera toggle, screen share, timer,
+**Calls** 1:1 and mesh (up to 4) audio/video with per-person tiles, mute, camera toggle, screen share, timer,
 history with durations and missed indicators, adaptive bitrate that steps down
 instead of freezing.
 **Notifications** device table, Edge Function on insert, per-chat levels,
