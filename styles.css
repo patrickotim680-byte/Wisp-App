@@ -749,16 +749,18 @@ input[type="range"] { padding: 0; border: none; background: none; accent-color: 
 .call { position: fixed; inset: 0; z-index: 60; background: oklch(0.16 0.01 var(--hue-n)); color: oklch(0.97 0 0) }
 .call-stage { position: absolute; inset: 0; overflow: hidden }
 
-#call-remote { width: 100%; height: 100%; object-fit: cover; background: oklch(0.22 0.01 var(--hue-n)) }
+/* the remote side is a grid of participant tiles now: see "group calls" in call.css */
 #call-local {
   position: absolute; top: calc(48px + env(safe-area-inset-top, 0px)); left: 16px;
   width: 94px; height: 156px; border-radius: 14px; object-fit: cover; z-index: 3;
   box-shadow: 0 6px 20px oklch(0 0 0 / 0.45); border: 1px solid oklch(1 0 0 / 0.14);
+  transition: box-shadow 0.28s var(--ease);
 }
-.call.audio #call-remote, .call.audio #call-local { display: none }
+#call-local.speaking { box-shadow: 0 6px 20px oklch(0 0 0 / 0.45), 0 0 0 3px var(--accent) }
+.call.audio #call-local { display: none }
 /* A voice call carrying video means somebody is sharing a screen. Show it,
-   letterboxed rather than cropped, and step the avatar card out of the way. */
-.call.audio.remote-video #call-remote { display: block; object-fit: contain; background: oklch(0.11 0 0) }
+   letterboxed rather than cropped (see .tile.has-video in call.css), and step
+   the avatar card out of the way. */
 .call.audio.remote-video .call-audio-bg { opacity: 0 }
 .call.audio.remote-video .call-avatar { display: none }
 .call.sharing #call-local { display: block; object-fit: contain; background: oklch(0.14 0 0) }
