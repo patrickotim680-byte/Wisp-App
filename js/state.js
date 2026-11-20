@@ -25,7 +25,17 @@ export const S = {
   typing: new Map(),   // chat_id -> Map(user_id, ts)
   keys: null,          // { pub, priv } CryptoKeys
   chatKeys: new Map(), // chat_id -> AES CryptoKey
-  unlocked: new Set(), // chat ids unlocked this session
+  unlocked: new Set(), // chat ids unlocked this session (legacy per-chat PIN)
+
+  // Private Vault. `ids` is the only part that exists while the vault is
+  // locked, and it holds nothing but conversation ids — no names, no previews,
+  // no bodies. See js/vault.js for why the client needs it locked.
+  vault: {
+    ids: new Set(),    // conversation ids that live in the vault
+    chats: [],         // vault_overview() rows, only while unlocked
+    unlocked: false,
+    visible: false,    // private content is on screen right now
+  },
 };
 
 const subs = new Map();

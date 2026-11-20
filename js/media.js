@@ -1,11 +1,39 @@
 // Client-side compression + upload. Images are re-encoded to WebP within a max
 // edge; video keeps its bytes (browsers can't transcode reliably) but we grab a
 // poster frame and enforce the account's size cap.
+//
+// Private media
+// ─────────────
+// An attachment sent in a conversation that lives in Private Vault is encrypted
+// in the browser before it is uploaded, with that conversation's AES-256-GCM
+// end-to-end key — the same key its message bodies use, wrapped per member with
+// their RSA key, which the server never sees unwrapped. So object storage holds
+// ciphertext: a signed URL for private media returns bytes nobody can open
+// without being a member of the conversation *and* holding the key.
+//
+// Reading goes the other way: fetch, decrypt in memory, hand out a blob: URL
+// that vault.js tracks and revokes the instant the vault locks. Decrypted bytes
+// are cached, but only inside the vault's encrypted store — never in the plain
+// browser HTTP cache and never in a plain IndexedDB record.
+//
+// This applies from the moment a conversation is vaulted, exactly like the
+// existing encryption toggle: media sent before that keeps whatever state it
+// had. Nothing rewrites history behind your back.
 import { upload, signedUrl } from './db.js';
 import { S } from './state.js';
 import { uuid, bytes, toast } from './util.js';
+import { isVaulted, getVaultBlob, setVaultBlob, trackedBlobUrl } from './vault.js';
+import { chatKey } from './crypto.js';
 
 const MAX_EDGE = 1600, Q = 0.82;
+
+const b64 = buf => {
+  const u8 = new Uint8Array(buf);
+  let s = '';
+  for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode(...u8.subarray(i, i + 0x8000));
+  return btoa(s);
+};
+const unb64 = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
 
 export async function compressImage(file) {
   if (!file.type.startsWith('image/') || file.type === 'image/gif') return { blob: file, w: 0, h: 0 };
@@ -64,21 +92,120 @@ export async function stageFile(file) {
   return item;
 }
 
+/* ── private-media encryption ─────────────────────────────────────────── */
+
+/**
+ * The conversation's shared end-to-end key — not the vault's local key. It has
+ * to be the shared one: the person on the other side needs to open the photo,
+ * and vault key material never leaves this device by design (see
+ * docs/PRIVATE-VAULT.md on why it is not synchronised).
+ *
+ * The guard matters. crypto.js's chatKey() mints a brand-new AES key and
+ * distributes it to every member when it cannot find or unwrap yours. That is
+ * exactly right when somebody turns encryption on, and it is destructive on a
+ * read path: with the identity key locked (a refreshed tab, no password in this
+ * session) it would replace the key that existing private media was encrypted
+ * under, and every earlier attachment would become unreadable. Refuse instead,
+ * and say why.
+ */
+async function mediaKey(chatId) {
+  if (!chatId) throw new Error('That attachment has no conversation to key from.');
+  if (S.chatKeys.has(chatId)) return S.chatKeys.get(chatId);
+  if (!S.keys?.priv) throw new Error('Your encryption key is locked in this session, so this file cannot be opened yet.');
+  const memberIds = S.members?.length ? S.members.map(m => m.user_id) : [];
+  return chatKey(chatId, memberIds);
+}
+
+async function sealBytes(chatId, blob) {
+  const key = await mediaKey(chatId);
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, await blob.arrayBuffer());
+  return { blob: new Blob([ct], { type: 'application/octet-stream' }), iv: b64(iv) };
+}
+
 export async function uploadStaged(chatId, item) {
   const ext = (item.name.split('.').pop() || 'bin').toLowerCase().slice(0, 6);
   const base = `${chatId}/${uuid()}`;
   const bucket = item.kind === 'voice' ? 'voice' : 'media';
   const path = `${base}.${item.kind === 'image' ? 'webp' : ext}`;
-  await upload(bucket, path, item.blob, item.blob.type);
+  const priv = isVaulted(chatId);
+
+  let body = item.blob, enc = null, posterBody = item.poster, posterEnc = null;
+  if (priv) {
+    const sealed = await sealBytes(chatId, item.blob);
+    body = sealed.blob; enc = { alg: 'AES-GCM', iv: sealed.iv, v: 1 };
+    if (item.poster) {
+      const sp = await sealBytes(chatId, item.poster);
+      posterBody = sp.blob; posterEnc = { alg: 'AES-GCM', iv: sp.iv, v: 1 };
+    }
+  }
+
+  // Upload the ciphertext as an opaque octet-stream when private, so the stored
+  // content type does not describe the plaintext either.
+  await upload(bucket, path, body, priv ? 'application/octet-stream' : (item.blob.type || undefined));
   let thumb = null;
-  if (item.poster) { thumb = `${base}.poster.webp`; await upload(bucket, thumb, item.poster, 'image/webp'); }
+  if (posterBody) {
+    thumb = `${base}.poster.webp`;
+    await upload(bucket, thumb, posterBody, priv ? 'application/octet-stream' : 'image/webp');
+  }
   return {
-    bucket, path, thumb, name: item.name, mime: item.blob.type || 'application/octet-stream',
+    bucket, path, thumb, name: item.name,
+    mime: item.blob.type || 'application/octet-stream',
     size: item.blob.size, w: item.w || null, h: item.h || null,
     duration: item.duration || null, waveform: item.waveform || null,
     noise_level: item.noiseLevel || null,
+    enc, thumb_enc: posterEnc,
   };
 }
 
-export const attUrl = a => a?.path ? signedUrl(a.bucket || 'media', a.path) : Promise.resolve(null);
-export const thumbUrl = a => a?.thumb ? signedUrl(a.bucket || 'media', a.thumb) : attUrl(a);
+// The chat id is the first path segment, by the storage path convention
+// (media/<chat_id>/<uuid>.<ext>), so a decrypt does not depend on which
+// conversation happens to be open.
+const chatIdOf = a => String(a?.path || '').split('/')[0] || null;
+
+async function openSealed(a, { thumb = false } = {}) {
+  const bucket = a.bucket || 'media';
+  const path = thumb ? a.thumb : a.path;
+  const box = thumb ? a.thumb_enc : a.enc;
+  const cacheKey = bucket + '/' + path;
+  const mime = thumb ? 'image/webp' : (a.mime || 'application/octet-stream');
+
+  const hit = await getVaultBlob(cacheKey);
+  if (hit) return trackedBlobUrl(hit);
+
+  const url = await signedUrl(bucket, path);
+  const res = await fetch(url);
+  if (!res.ok) throw new Error('That file could not be fetched.');
+  const ct = await res.arrayBuffer();
+  const key = await mediaKey(chatIdOf(a));
+  const pt = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: unb64(box.iv) }, key, ct);
+  await setVaultBlob(cacheKey, pt, mime);
+  return trackedBlobUrl(new Blob([pt], { type: mime }));
+}
+
+// Callers (thread.js, panels.js) treat these as "a URL, or null" and render
+// nothing for null. A rejection here would be an unhandled promise rejection in
+// the middle of a render — which is exactly what happens when the vault locks
+// while a private photo is still resolving. Fail to null and log it.
+const orNull = p => p.catch(e => { console.warn('private media could not be opened', e); return null; });
+
+/**
+ * A URL the UI can point an <img>/<video>/<audio> at.
+ *
+ * Plain attachment: a signed storage URL, as before.
+ * Private attachment: a blob: URL over bytes decrypted in this tab, tracked by
+ * vault.js so it dies the moment the vault locks. There is no code path that
+ * produces a working URL for private media while the vault is locked.
+ */
+export async function attUrl(a) {
+  if (!a?.path) return null;
+  if (a.enc) return orNull(openSealed(a));
+  return signedUrl(a.bucket || 'media', a.path);
+}
+
+export async function thumbUrl(a) {
+  if (!a) return null;
+  if (a.thumb && a.thumb_enc) return orNull(openSealed(a, { thumb: true }));
+  if (a.thumb) return signedUrl(a.bucket || 'media', a.thumb);
+  return attUrl(a);
+}

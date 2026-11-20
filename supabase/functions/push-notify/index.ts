@@ -1,6 +1,20 @@
 // Fires on new rows in public.messages (Database Webhook -> this function) and
 // pushes to every device of every other chat member, honouring mute, focus
-// mode, quiet hours, notify_level and notification-preview privacy.
+// mode, quiet hours, notify_level and notification privacy.
+//
+// Private Vault
+// -------------
+// If the recipient has put the conversation in their Private Vault, the payload
+// is stripped here, on the server, before it is handed to FCM: no sender name,
+// no message text, no conversation name, and no chat_id (so a tap cannot deep
+// link into it either). That has to happen here rather than on the device,
+// because a push arrives while the app is closed and the vault is locked — by
+// the time any client code could filter it, the operating system has already
+// drawn it on the lock screen.
+//
+// The general tiers apply to everything else:
+//   standard -> sender and message      private -> "Wisp / New message"
+//   maximum  -> "Wisp / New message", with a shared tag and no deep link
 //
 // Transport: FCM HTTP v1. Android high-priority pushes ring through a closed
 // app. iOS lock-screen ringing needs native CallKit/PushKit and cannot be done
@@ -67,6 +81,15 @@ function inQuietHours(from: string | null, to: string | null): boolean {
   return a <= b ? mins >= a && mins < b : mins >= a || mins < b;
 }
 
+// notif_privacy is the current column; notif_preview is the older one and is
+// only consulted when the new one has not been set.
+function tierFor(s: { notif_privacy?: string | null; notif_preview?: string | null } | undefined): string {
+  const t = s?.notif_privacy;
+  if (t === 'standard' || t === 'private' || t === 'maximum') return t;
+  if (s?.notif_preview === 'hidden' || s?.notif_preview === 'sender_only') return 'private';
+  return 'standard';
+}
+
 Deno.serve(async req => {
   try {
     const body = await req.json();
@@ -76,7 +99,7 @@ Deno.serve(async req => {
 
     const [{ data: chat }, { data: members }, { data: sender }, { data: mentions }] = await Promise.all([
       db.from('chats').select('id, name, type').eq('id', m.chat_id).single(),
-      db.from('chat_members').select('user_id, notify_level, muted_until, mute_forever').eq('chat_id', m.chat_id),
+      db.from('chat_members').select('user_id, notify_level, muted_until, mute_forever, vaulted').eq('chat_id', m.chat_id),
       db.from('profiles').select('display_name').eq('id', m.sender_id).maybeSingle(),
       db.from('mentions').select('user_id').eq('message_id', m.id),
     ]);
@@ -91,7 +114,8 @@ Deno.serve(async req => {
 
     const ids = targets.map(t => t.user_id);
     const [{ data: settings }, { data: devices }] = await Promise.all([
-      db.from('user_settings').select('user_id, notif_preview, focus_mode, quiet_from, quiet_to').in('user_id', ids),
+      db.from('user_settings')
+        .select('user_id, notif_preview, notif_privacy, focus_mode, quiet_from, quiet_to').in('user_id', ids),
       db.from('devices').select('user_id, token, platform').in('user_id', ids),
     ]);
     const token = await accessToken();
@@ -100,12 +124,26 @@ Deno.serve(async req => {
     for (const t of targets) {
       const s = (settings ?? []).find(x => x.user_id === t.user_id);
       if (s?.focus_mode || inQuietHours(s?.quiet_from ?? null, s?.quiet_to ?? null)) continue;
+
+      // The recipient put this conversation in their vault. Everything that
+      // could identify it comes off here, not on the device.
+      const priv = !!t.vaulted;
+      const tier = tierFor(s);
+
       const who = chat?.type === 'dm' ? (sender?.display_name ?? 'New message') : (chat?.name ?? 'Group');
-      const preview = s?.notif_preview ?? 'full';
-      const title = preview === 'hidden' ? 'Wisp' : who;
-      const bodyText = preview === 'full'
-        ? (m.body ? String(m.body).slice(0, 160) : `[${m.kind}]`)
-        : 'New message';
+      const title = priv || tier !== 'standard' ? 'Wisp' : who;
+      const bodyText = priv
+        ? 'New private message'
+        : tier === 'standard'
+          ? (m.body ? String(m.body).slice(0, 160) : `[${m.kind}]`)
+          : 'New message';
+
+      // No chat_id in a private payload: it is what a tap would deep-link with,
+      // and it names the conversation to anything that reads the payload.
+      const data: Record<string, string> = priv
+        ? { private: '1', title, body: bodyText }
+        : { chat_id: m.chat_id, message_id: m.id ?? '', kind: m.kind ?? 'text', title, body: bodyText };
+      if (!priv && tier === 'maximum') data.collapse = 'wisp';
 
       for (const d of (devices ?? []).filter(x => x.user_id === t.user_id)) {
         if (!token) { console.log('no FCM credentials: would notify', d.token, title); continue; }
@@ -113,9 +151,24 @@ Deno.serve(async req => {
           message: {
             token: d.token,
             notification: { title, body: bodyText },
-            data: { chat_id: m.chat_id, message_id: m.id ?? '', kind: m.kind ?? 'text', title, body: bodyText },
-            android: { priority: m.kind === 'call' ? 'HIGH' : 'HIGH', ttl: '120s' },
-            apns: { headers: { 'apns-priority': '10' } },
+            data,
+            android: {
+              priority: 'HIGH',
+              ttl: '120s',
+              // Private and maximum-privacy notifications are marked as
+              // sensitive so the platform keeps them off a locked screen where
+              // it honours that, and collapse into one entry rather than
+              // stacking a count.
+              notification: priv || tier !== 'standard'
+                ? { visibility: 'PRIVATE', tag: priv ? 'wisp-private' : 'wisp' }
+                : undefined,
+            },
+            apns: {
+              headers: {
+                'apns-priority': '10',
+                ...(priv || tier !== 'standard' ? { 'apns-collapse-id': priv ? 'wisp-private' : 'wisp' } : {}),
+              },
+            },
           },
         };
         const r = await fetch(`https://fcm.googleapis.com/v1/projects/${FCM_PROJECT}/messages:send`, {

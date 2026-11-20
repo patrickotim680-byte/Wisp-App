@@ -1,9 +1,27 @@
-// Local notifications honour the preview-privacy setting, focus mode and quiet
-// hours. Background/closed-app delivery needs the push Edge Function + FCM
-// (see README): the device token registered here is what that function reads.
+// Local notifications honour the notification-privacy tier, focus mode and
+// quiet hours. Background/closed-app delivery needs the push Edge Function +
+// FCM (see README): the device token registered here is what that function
+// reads, and that function applies the same tiers server-side.
+//
+// Notification privacy
+// ───────────────────
+//   standard — "Sarah — Are you free tonight?"
+//   private  — "Wisp — New message"           (no contents, no sender)
+//   maximum  — "Wisp — New message"           (and one shared tag, so the
+//                                              number of conversations in
+//                                              play does not leak either, and
+//                                              tapping it opens Wisp rather
+//                                              than a specific conversation)
+//
+// A conversation in Private Vault is not covered by that setting: it always
+// gets "Wisp — New private message", with no sender, no contents, no
+// conversation id in the payload and no deep link. That is not configurable,
+// because a preview setting somebody forgot to change is exactly how a private
+// conversation ends up on a lock screen.
 import { S } from './state.js';
 import { sb, ins, publicUrl } from './db.js';
 import { toast } from './util.js';
+import { isVaulted } from './vault.js';
 
 export async function askPermission() {
   if (!('Notification' in window)) return false;
@@ -11,31 +29,73 @@ export async function askPermission() {
   return Notification.permission === 'granted';
 }
 
+const canNotify = () => 'Notification' in window && Notification.permission === 'granted';
+
+/** Resolve the tier, falling back to the older notif_preview column. */
+export function privacyTier() {
+  const t = S.settings?.notif_privacy;
+  if (t === 'standard' || t === 'private' || t === 'maximum') return t;
+  switch (S.settings?.notif_preview) {
+    case 'hidden': return 'private';
+    case 'sender_only': return 'private';
+    default: return 'standard';
+  }
+}
+
+/**
+ * The protected notification. No sender, no message, no conversation id, one
+ * shared tag so a burst of private messages collapses into a single banner
+ * instead of counting them out on the lock screen.
+ */
+export function notifyPrivate() {
+  if (!canNotify()) return;
+  const n = new Notification('Wisp', { body: 'New private message', tag: 'wisp-private', silent: false });
+  n.onclick = () => { window.focus(); location.hash = '#vault'; n.close(); };
+  playSound();
+}
+
 export function notify(chat, m) {
-  if (!('Notification' in window) || Notification.permission !== 'granted') return;
-  const mode = S.settings.notif_preview;
+  if (!canNotify()) return;
+  // Defence in depth: chats.js routes private conversations here-adjacent to
+  // notifyPrivate() before this is ever called, and this catches any path that
+  // forgets to.
+  if (isVaulted(chat?.chat_id)) return notifyPrivate();
+
+  const tier = privacyTier();
   const who = chat.name || 'New message';
-  const title = mode === 'hidden' ? 'Wisp' : who;
-  const body = mode === 'full'
-    ? (m.body || `[${m.kind}]`).slice(0, 140)
-    : mode === 'sender_only' ? 'New message' : 'New message';
-  const n = new Notification(title, { body, tag: chat.chat_id, silent: false });
-  n.onclick = () => { window.focus(); location.hash = '#chat/' + chat.chat_id; n.close(); };
+  const title = tier === 'standard' ? who : 'Wisp';
+  const body = tier === 'standard' ? (m.body || `[${m.kind}]`).slice(0, 140) : 'New message';
+  const tag = tier === 'maximum' ? 'wisp' : chat.chat_id;
+
+  const n = new Notification(title, { body, tag, silent: false });
+  n.onclick = () => {
+    window.focus();
+    // Maximum privacy does not deep-link: the URL itself would name the
+    // conversation, and a URL is a thing that ends up in history.
+    if (tier !== 'maximum') location.hash = '#chat/' + chat.chat_id;
+    n.close();
+  };
   playSound();
 }
 
 // A separate banner for incoming calls — a call is a stronger signal than a
-// text, so this only checks focus mode / quiet hours, not per-chat mute.
+// text, so this only checks focus mode / quiet hours, not per-chat mute. A call
+// in a private conversation still does not name the caller.
 export function notifyIncomingCall(who, kind, chatId) {
-  if (!('Notification' in window) || Notification.permission !== 'granted') return;
+  if (!canNotify()) return;
   if (S.settings.focus_mode) return;
-  const n = new Notification(`Incoming ${kind === 'video' ? 'video' : 'voice'} call`, {
-    body: who || 'Wisp', tag: 'call-' + (chatId || ''), requireInteraction: true,
+  const priv = isVaulted(chatId);
+  const tier = privacyTier();
+  const hide = priv || tier !== 'standard';
+  const n = new Notification(priv ? 'Wisp' : `Incoming ${kind === 'video' ? 'video' : 'voice'} call`, {
+    body: hide ? (priv ? 'Private call' : 'Incoming call') : (who || 'Wisp'),
+    tag: 'call-' + (priv ? 'private' : (chatId || '')),
+    requireInteraction: true,
   });
   n.onclick = () => { window.focus(); n.close(); };
 }
 
-/* ── tone synthesis ───────────────────────────────────────────────────────
+/* ── tone synthesis ──────────────────────────────────────────────────────
    Every built-in tone is a short list of notes played in sequence with a
    quick attack/decay envelope — no audio files to host, works offline, and
    sounds distinct enough at a glance to tell message and call sounds apart.
@@ -70,7 +130,7 @@ const CALL_TONES = {
   pulse: { notes: [440, 440, 440], opts: { noteLen: 0.11, gap: 0.16, peak: 0.15 } },
 };
 
-/* ── custom uploaded tones ────────────────────────────────────────────────
+/* ── custom uploaded tones ──────────────────────────────────────────────
    A storage path instead of a preset key means "play the file this account
    uploaded". The old one line — `new Audio(url).play().catch(() => {})` —
    looked complete and failed in four different ways, all of them silent:
@@ -220,7 +280,7 @@ export function verifySound(path, timeoutMs = 8000) {
   });
 }
 
-/* ── ring loops ───────────────────────────────────────────────────────────
+/* ── ring loops ─────────────────────────────────────────────────────────
    Shared by the incoming-call ringtone and the outgoing-call ringback —
    both are just "replay the chosen call tone on an interval" with a
    different cadence, and both need to stop cleanly the instant the call
