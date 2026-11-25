@@ -7,6 +7,7 @@ import { applySettings, saveSettings } from './theme.js';
 import { loadChats, loadFolders, renderChatList, openChat, closeChat, subscribeGlobal,
          updateBadge, newGroupFlow, startDm, renderConvHeader, chatPhoto } from './chats.js';
 import { warmAllCached } from './cache.js';
+import { initOutbox } from './outbox.js';
 import { mountThread, loadMessages } from './thread.js';
 import { mountComposer } from './composer.js';
 import { mountCalls, setIceServers } from './calls.js';
@@ -129,6 +130,12 @@ async function start() {
     await loadFolders();
     await loadChats();
     subscribeGlobal();
+    // Resumes any message still sitting in the outbox from before this
+    // session existed (a send that failed, or was still queued, when the
+    // tab was last closed/killed) — needs a live, signed-in client to
+    // actually retry against, so it starts here rather than at the very top
+    // of boot alongside warmAllCached().
+    initOutbox();
     startPresence();
     initIdentity();
     registerDevice();

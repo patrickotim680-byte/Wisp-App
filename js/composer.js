@@ -5,6 +5,8 @@ import { stageFile, uploadStaged } from './media.js';
 import { sealBody } from './crypto.js';
 import { renderThread, appendMessage } from './thread.js';
 import { unlockKeysInteractive } from './auth.js';
+import { enqueue } from './outbox.js';
+import { isSlowNetwork } from './net.js';
 
 const input = () => $('#input');
 
@@ -95,14 +97,26 @@ export async function pushMessage(base) {
         }
       } catch { /* fall through to the original error below */ }
     }
+    // A network failure here (timeout, dropped connection — the normal
+    // weather on 2G) is not a reason to lose the message: queue it in the
+    // durable outbox, which retries with backoff and survives a reload, and
+    // let the bubble's own "!" (tap to retry immediately) carry the bad
+    // news instead of a toast. A definite server rejection (RLS, bad
+    // payload) retries the same way and will keep failing — the person
+    // still sees it as failed, just without an extra popup for something
+    // that may well resolve itself in a few seconds.
     temp.pendingSend = false; temp.failed = true;
     renderThread(false);
-    throw e;
+    enqueue(temp.id, base.body, row);
   }
 }
 
 /* ── typing ───────────────────────────────────────────────────────────── */
-const ping = debounce(() => { if (S.chat) rpc('set_typing', { p_chat: S.chat.chat_id }).catch(() => {}); }, 900);
+// Skipped entirely on a slow/metered connection: it's a cosmetic nicety that
+// costs a round trip per keystroke-burst, and on 2G that round trip competes
+// with the message itself for the one thing that actually matters getting
+// through quickly.
+const ping = debounce(() => { if (S.chat && !isSlowNetwork()) rpc('set_typing', { p_chat: S.chat.chat_id }).catch(() => {}); }, 900);
 
 function autosize() {
   const el = input();

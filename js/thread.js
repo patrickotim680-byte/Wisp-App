@@ -6,8 +6,25 @@ import { attUrl, thumbUrl } from './media.js';
 import { openBody } from './crypto.js';
 import { getCachedThread, setCachedThread } from './cache.js';
 import { openCallDetails } from './calls.js';
+import { isSlowNetwork } from './net.js';
 
-const PAGE = 80;
+// Smaller history pages on a slow/metered connection: the point of opening a
+// chat is to see the last few texts right away, not to pull 80 rows
+// (attachments, reactions metadata and all) before the first one can paint.
+// loadOlder() still works exactly the same way, just asks for less per trip.
+const pageSize = () => isSlowNetwork() ? 25 : 80;
+
+// Every column messages actually has *except* search_tsv: that one is a
+// generated (stored) tsvector — effectively a second, indexable copy of
+// `body` — kept only for the in-chat search feature. select('*') ships it to
+// the client on every single row, on every page load, i.e. the client
+// downloads a redundant encoding of text it already has, for every message,
+// forever. It's never read anywhere in this file (or anywhere client-side:
+// search goes through the server-side `search_tsv` index, not a client
+// copy). Naming columns explicitly instead of '*' is the fix.
+const MSG_COLS = 'id, chat_id, sender_id, kind, body, cipher, iv, attachment, meta, reply_to, ' +
+  'forwarded_from, client_id, view_once, edited_at, deleted_all, pinned_at, pinned_by, expires_at, created_at';
+
 let atBottom = true;
 
 // Applies a cached {msgs, status, reacts} payload onto live state without
@@ -36,7 +53,7 @@ export async function loadMessages() {
   }
 
   const { data, error } = await sb.from('messages')
-    .select('*').eq('chat_id', chatId).order('created_at', { ascending: false }).limit(PAGE);
+    .select(MSG_COLS).eq('chat_id', chatId).order('created_at', { ascending: false }).limit(pageSize());
   // The user may have switched to a different chat while this was in flight.
   // Applying a late response for a chat that's no longer open is exactly how
   // one conversation's messages end up showing under another one's name.
@@ -70,8 +87,8 @@ export async function loadOlder() {
   if (!S.msgs.length) return;
   const chatId = S.chat.chat_id;
   const oldest = S.msgs[0].created_at;
-  const { data } = await sb.from('messages').select('*').eq('chat_id', chatId)
-    .lt('created_at', oldest).order('created_at', { ascending: false }).limit(PAGE);
+  const { data } = await sb.from('messages').select(MSG_COLS).eq('chat_id', chatId)
+    .lt('created_at', oldest).order('created_at', { ascending: false }).limit(pageSize());
   if (S.chat?.chat_id !== chatId || !data?.length) return;
   const keepH = $('#thread').scrollHeight;
   S.msgs = [...data.reverse(), ...S.msgs];
@@ -130,7 +147,18 @@ function ticks(m) {
   const wrap = h('span', { class: 'ticks' });
   if (m.sender_id !== S.me.id) return wrap;
   if (m.pendingSend) { wrap.textContent = '◌'; return wrap; }
-  if (m.failed) { wrap.textContent = '!'; wrap.style.color = 'var(--danger)'; return wrap; }
+  if (m.failed) {
+    // Not a dead end: this message is sitting in the durable outbox and
+    // will retry itself on a backoff timer, but tapping the "!" jumps the
+    // queue instead of waiting. Dynamic import avoids a static import cycle
+    // (outbox.js dynamic-imports this module back, to re-render on
+    // success/failure) — same pattern already used elsewhere in this app
+    // for one-off cross-module calls (see chats.js's chatMenu()).
+    wrap.textContent = '!'; wrap.style.color = 'var(--danger)'; wrap.title = 'Not sent — tap to retry now';
+    wrap.style.cursor = 'pointer';
+    wrap.onclick = e => { e.stopPropagation(); import('./outbox.js').then(({ retryNow }) => retryNow(m.client_id)); };
+    return wrap;
+  }
   const rows = S.status.get(m.id) || [];
   const others = rows.length;
   if (!others) { wrap.textContent = '✓'; return wrap; }
@@ -427,9 +455,7 @@ const previewSeen = new Set();
 // site below), an uncaught throw here becomes a silent unhandled promise
 // rejection instead of ever showing up as a message the user can act on.
 const safeHost = url => { try { return new URL(url).hostname; } catch { return url; } };
-async function linkPreview(url, bub) {
-  const card = h('div', { class: 'preview-card' }, h('small', {}, safeHost(url)));
-  bub.append(card);
+async function fetchPreview(url, card) {
   try {
     let { data } = await sb.from('link_previews').select('*').eq('url', url).maybeSingle();
     if (!data && !previewSeen.has(url)) {
@@ -444,6 +470,24 @@ async function linkPreview(url, bub) {
       data.description && h('small', {}, data.description.slice(0, 160)),
       h('small', { class: 'hint' }, data.site || safeHost(url)));
   } catch { /* preview is a nicety, never block the message */ }
+}
+async function linkPreview(url, bub) {
+  // A link preview is pure cost for a message that already delivered its
+  // actual content (the text): it fetches a remote page's metadata plus,
+  // often, a thumbnail image the person never asked to download. On a
+  // slow/metered connection that is exactly the kind of weight this app is
+  // meant to avoid carrying, so it becomes tap-to-load there — the hostname
+  // still shows for free, nothing crosses the network until it's wanted.
+  if (isSlowNetwork()) {
+    const card = h('div', { class: 'preview-card', style: { cursor: 'pointer' } },
+      h('small', {}, '🔗 ' + safeHost(url) + ' · tap to load preview'));
+    card.onclick = e => { e.stopPropagation(); fetchPreview(url, card); };
+    bub.append(card);
+    return;
+  }
+  const card = h('div', { class: 'preview-card' }, h('small', {}, safeHost(url)));
+  bub.append(card);
+  fetchPreview(url, card);
 }
 
 /* ── per-message actions ───────────────────────────────────────────────── */

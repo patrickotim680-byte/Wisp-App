@@ -8,6 +8,7 @@ import { renderThread, appendMessage, patchStatus, patchReaction, loadMessages, 
 import { renderAttachRow } from './composer.js';
 import { notify } from './notify.js';
 import { getMemThread, warmCache } from './cache.js';
+import { mergeIntoThread } from './outbox.js';
 
 export async function loadPeople(ids) {
   const need = [...new Set(ids.filter(Boolean))].filter(id => !S.people.has(id));
@@ -254,6 +255,12 @@ export async function openChat(chatId) {
     renderConvHeader();
     await messagesP;
     if (myToken !== S.chatToken) return;
+    // Anything still sitting in the durable send-outbox for this chat (a
+    // message that failed, or hadn't gotten a response yet, before the app
+    // was last closed/reloaded) belongs back in the thread now — otherwise
+    // it would just silently never have existed from the person's point of
+    // view, which is the opposite of "text delivery is the priority".
+    mergeIntoThread(chatId);
     // Member/star/bookmark context may have landed after the first paint(s)
     // above — one cheap re-render (no re-scroll) makes sure author names,
     // stars, and bookmarks reflect it instead of waiting for the next change.
@@ -324,15 +331,40 @@ export function subscribeChat(chatId) {
     .on('postgres_changes', { event: '*', schema: 'public', table: 'poll_votes' }, () => renderThread(false)));
 }
 
+// Patches one chat row in place from a realtime message INSERT, instead of
+// re-running the chat_overview() RPC (a full list query covering every chat
+// the person is in) on *every single incoming message*. That refetch was
+// previously unconditional — on a weak connection it meant a second full
+// round trip, on top of the realtime payload that already told us
+// everything needed to update the list, for every text that arrived. This
+// covers the common case (a message in a chat already on the list); loadChats()
+// is still used as a fallback for the rare case of a brand-new chat/group
+// this device hasn't seen yet, where there's genuinely nothing local to patch.
+function patchChatPreview(c, m) {
+  c.last_at = m.created_at;
+  c.last_kind = m.kind;
+  c.last_body = m.deleted_all ? null : (m.cipher ? null : m.body);
+  const amOpenAndVisible = S.chat?.chat_id === c.chat_id && document.visibilityState === 'visible';
+  if (m.sender_id !== S.me.id && !amOpenAndVisible) c.unread = (c.unread || 0) + 1;
+  // Mirrors chat_overview()'s own ordering (schema.sql: "order by me.pinned
+  // desc, c.last_message_at desc") so a bumped chat jumps to the right spot
+  // without a server round trip to confirm it.
+  S.chats.sort((a, b) => (b.pinned - a.pinned) || (new Date(b.last_at) - new Date(a.last_at)));
+  renderChatList();
+  updateBadge();
+}
+
 export function subscribeGlobal() {
   channel('global', ch => ch
     .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, async ({ new: m }) => {
-      await loadChats();
+      const c = S.chats.find(x => x.chat_id === m.chat_id);
+      if (!c) await loadChats(); // genuinely new chat/group — nothing local to patch yet
+      else patchChatPreview(c, m);
       if (m.sender_id === S.me.id) return;
       if (S.chat?.chat_id === m.chat_id && document.visibilityState === 'visible') return;
-      const c = S.chats.find(x => x.chat_id === m.chat_id);
-      if (!c || c.muted || S.settings.focus_mode || inQuietHours()) return;
-      notify(c, m);
+      const target = S.chats.find(x => x.chat_id === m.chat_id);
+      if (!target || target.muted || S.settings.focus_mode || inQuietHours()) return;
+      notify(target, m);
     })
     .on('postgres_changes', { event: '*', schema: 'public', table: 'chat_members', filter: `user_id=eq.${S.me.id}` }, () => loadChats())
     .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'presence' }, async ({ new: p }) => {
