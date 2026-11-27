@@ -342,7 +342,14 @@ function privacySection() {
     row('Profile photo', selectBox(vis, s.photo_vis, v => saveSettings({ photo_vis: v })), 'Who can open your picture full size.'),
     row('About', selectBox(vis, s.about_vis, v => saveSettings({ about_vis: v }))),
     row('Default disappearing', selectBox([[0, 'Off'], [3600, '1 hour'], [86400, '24 hours'], [604800, '7 days'], [7776000, '90 days']].map(([v, l]) => [String(v), l]), String(s.default_disappear), v => saveSettings({ default_disappear: +v })), 'Applied to new chats you start.'),
-    row('Media size cap', slider(4, 200, 4, s.media_limit_mb, v => saveSettings({ media_limit_mb: v }), v => v + ' MB')),
+    // Max raised from 200 to 500: it used to exceed what the `media` bucket's
+    // own file_size_limit would actually accept (100MB — see the
+    // 20261127_resumable_media_uploads migration), so a cap set above 100MB
+    // was a setting that silently lied. Uploads now go through Storage's
+    // resumable endpoint (js/upload.js) rather than one plain PUT, which is
+    // what makes a genuinely higher ceiling realistic instead of just failing
+    // uploads past the old single-request limit.
+    row('Media size cap', slider(4, 500, 4, s.media_limit_mb, v => saveSettings({ media_limit_mb: v }), v => v + ' MB')),
     h('button', { class: 'btn small', onclick: blockedList }, 'Blocked list'));
 }
 

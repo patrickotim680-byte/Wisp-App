@@ -8,6 +8,7 @@ import { loadChats, loadFolders, renderChatList, openChat, closeChat, subscribeG
          updateBadge, newGroupFlow, startDm, renderConvHeader, chatPhoto } from './chats.js';
 import { warmAllCached } from './cache.js';
 import { initOutbox } from './outbox.js';
+import { resumePendingUploads } from './upload.js';
 import { mountThread, loadMessages } from './thread.js';
 import { mountComposer } from './composer.js';
 import { mountCalls, setIceServers } from './calls.js';
@@ -136,6 +137,14 @@ async function start() {
     // actually retry against, so it starts here rather than at the very top
     // of boot alongside warmAllCached().
     initOutbox();
+    // Mirrors initOutbox() above, for media instead of text: finishes any
+    // upload whose blob survived a tab kill in IndexedDB but never
+    // completed, then sends the chat message it was waiting on — see
+    // upload.js and media.js/composer.js's `extra` plumbing.
+    resumePendingUploads(async ({ msgBase, attachmentMeta }, path) => {
+      const { pushMessage } = await import('./composer.js');
+      await pushMessage({ ...msgBase, attachment: { ...attachmentMeta, path, thumb: null } });
+    });
     startPresence();
     initIdentity();
     registerDevice();

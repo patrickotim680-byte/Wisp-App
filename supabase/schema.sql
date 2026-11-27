@@ -1260,7 +1260,7 @@ alter table calls replica identity full;
 --   sounds/<user_id>/<file>           (public read)
 -- ============================================================================
 insert into storage.buckets (id, name, public, file_size_limit)
-values ('media','media', false, 104857600),
+values ('media','media', false, 524288000), -- 500MB; see 20261127_resumable_media_uploads.sql
        ('voice','voice', false, 26214400),
        ('avatars','avatars', true, 5242880),
        ('wallpapers','wallpapers', true, 10485760),
