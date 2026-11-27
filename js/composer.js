@@ -25,14 +25,34 @@ export async function send() {
 
   try {
     if (staged.length) {
-      for (let i = 0; i < staged.length; i++) {
-        const item = staged[i];
-        const att = await uploadStaged(chat.chat_id, item);
-        await pushMessage({
+      // Each attachment's upload was already kicked off back when it was
+      // attached (media.js's beginUpload, via stageFile); here we just wait
+      // on whichever ones aren't done yet. Running these concurrently
+      // (instead of the old one-file-at-a-time loop) matters when someone
+      // sends several files at once — their uploads overlap instead of
+      // queuing behind each other on top of their own internal chunking.
+      // `extra` is stamped onto each upload's durable record right now, at
+      // the moment of actually sending, so a tab-kill after this point still
+      // lets resumePendingUploads() finish both the transfer and the send.
+      await Promise.all(staged.map((item, i) => {
+        const msgBase = {
           kind: item.kind, body: i === 0 ? (text || item.caption || null) : (item.caption || null),
-          attachment: att, reply_to: i === 0 ? reply : null, view_once: !!item.viewOnce,
-        });
-      }
+          reply_to: i === 0 ? reply : null, view_once: !!item.viewOnce,
+        };
+        // Everything resumePendingUploads() would need to finish this send
+        // from scratch on next boot, if the tab doesn't survive to see the
+        // upload complete itself. (No `thumb` — a resumed video attachment
+        // may briefly lack its poster frame; thumbUrl() already falls back
+        // to the full attachment, so the UI degrades gracefully.)
+        const attachmentMeta = {
+          bucket: item.bucket, path: item.path, name: item.name,
+          mime: item.blob.type || 'application/octet-stream', size: item.blob.size,
+          w: item.w || null, h: item.h || null, duration: item.duration || null,
+          waveform: item.waveform || null, noise_level: item.noiseLevel || null,
+        };
+        return uploadStaged(chat.chat_id, item, { msgBase, attachmentMeta })
+          .then(att => pushMessage({ ...msgBase, attachment: att }));
+      }));
     } else {
       await pushMessage({ kind: 'text', body: text, reply_to: reply });
     }
